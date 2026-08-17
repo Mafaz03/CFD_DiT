@@ -1,0 +1,51 @@
+{
+  "DiT": {
+    "d_model"         : 768,
+    "g_channels"      : 4,
+    "grid_size"       : 32,
+    "patch_size"      : 4,
+    "timestep_emb_dim": 768,
+    "number_emb_dim"  : 768,
+    "num_layers"      : 12,
+    "num_heads"       : 12
+  },
+
+  "VAE": {
+    "scaling_factor" : 0.18215
+  },
+  
+  "Scheduler": {
+    "num_timesteps": 1000,
+    "beta_start"   : 0.0001,
+    "beta_end"     : 0.02
+  },
+
+  "Training": {
+    "epochs"           : 50,
+    "batch_size"       : 32,
+    "accumulation_step": 4,
+    "learning_rate"    : 1E-4   
+  },
+
+  "saves": {
+    "DiT_Path"      : "DiT.pth",
+    "DiT_Save_every": 5,
+    "load_model_for_traning": 1
+  },
+
+  "Data": {
+    "name": "Lid_Driven_domain"
+  },
+
+  "Stats": {
+    "Re_Mean" : 1250.499,
+    "Re_Std"  : 732.320,
+    
+    "U_MEAN"  : -0.0242,
+    "U_STD"   : 0.9540,
+    "V_MEAN"  : 0.0003,
+    "V_STD"   : 1.0493,
+    "P_MEAN"  : -0.0199,
+    "P_STD"   : 0.1502
+  }
+}
