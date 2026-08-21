@@ -54,4 +54,14 @@ class LinearNoiseScheduler:
             sigma = variance ** 0.5
             z = torch.randn(xt.shape).to(xt.device)
             return mean + sigma * z, x0
-        
+
+    def ddim_step(self, xt, pred_noise, t, t_prev, eta=0.0):
+        alpha_t = self.alpha_cum_prod.to(xt.device)[t]
+        alpha_prev = self.alpha_cum_prod.to(xt.device)[t_prev] if t_prev >= 0 else torch.tensor(1.0, device=xt.device)
+
+        x0_pred = (xt - torch.sqrt(1 - alpha_t) * pred_noise) / torch.sqrt(alpha_t)
+        x0_pred = torch.clamp(x0_pred, -4, 4)  # match your data's actual range, not [-1,1] — see note below
+
+        dir_xt = torch.sqrt(1 - alpha_prev) * pred_noise
+        xt_prev = torch.sqrt(alpha_prev) * x0_pred + dir_xt
+        return xt_prev, x0_pred

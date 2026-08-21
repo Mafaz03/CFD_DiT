@@ -8,13 +8,17 @@ from scipy.spatial import cKDTree
 from tqdm import tqdm
 import argparse
 from pathlib import Path
+import json
 
 ROOT = Path(__file__).resolve().parent.parent
+with open(f"{ROOT}/config/config.json", "r") as file:
+    config = json.load(file)
 
 def create():
 
     parser = argparse.ArgumentParser(description="Dataset creation for multiple CFD comsol simulations")
     parser.add_argument("-f",   "--folder")
+    parser.add_argument("-m",   "--meta")
     parser.add_argument("-t",   "--threshold",     default = 0.01, type = float)
     parser.add_argument("-n",   "--grid_per_axis", default = 64,   type = int)
     parser.add_argument("-l_c", "--length_cap",    default = None, type = float)
@@ -47,6 +51,8 @@ def create():
                 ~np.isnan(p)
             )
 
+            
+
             x = x[valid]
             y = y[valid]
             u = u[valid]
@@ -64,9 +70,9 @@ def create():
 
             X, Y = np.meshgrid(xi, yi)
 
-            U = griddata((x_scaled, y_scaled+args.shift_up), u, (X, Y), method="cubic")
-            V = griddata((x_scaled, y_scaled+args.shift_up), v, (X, Y), method="cubic")
-            P = griddata((x_scaled, y_scaled+args.shift_up), p, (X, Y), method="cubic")
+            U = griddata((x_scaled, y_scaled+args.shift_up), u, (X, Y), method="linear")
+            V = griddata((x_scaled, y_scaled+args.shift_up), v, (X, Y), method="linear")
+            P = griddata((x_scaled, y_scaled+args.shift_up), p, (X, Y), method="linear")
 
             # Build KD-tree from original points
             tree = cKDTree(np.c_[x_scaled, y_scaled + args.shift_up])
@@ -78,13 +84,28 @@ def create():
             dist = dist.reshape(X.shape)
 
             # Mask points farther than a threshold
-            mask = dist > args.threshold
+            untrustworthy = dist > args.threshold
 
-            U = np.ma.masked_where(mask, U)
-            V = np.ma.masked_where(mask, V)
-            P = np.ma.masked_where(mask, P)
+            untrustworthy = untrustworthy | np.isnan(U) | np.isnan(V) | np.isnan(P)
 
-            mask = ~mask
+            U = np.where(untrustworthy, np.nan, U)
+            V = np.where(untrustworthy, np.nan, V)
+            P = np.where(untrustworthy, np.nan, P)
+
+            # import pdb; pdb.set_trace()
+            
+            U[U < config["Stats"][args.meta]["U_CLIP_MIN"]] = config["Stats"][args.meta]["U_CLIP_MIN"]
+            U[U > config["Stats"][args.meta]["U_CLIP_MAX"]] = config["Stats"][args.meta]["U_CLIP_MAX"]
+
+            V[V < config["Stats"][args.meta]["V_CLIP_MIN"]] = config["Stats"][args.meta]["V_CLIP_MIN"]
+            V[V > config["Stats"][args.meta]["V_CLIP_MAX"]] = config["Stats"][args.meta]["V_CLIP_MAX"]
+
+            P[P < config["Stats"][args.meta]["P_CLIP_MIN"]] = config["Stats"][args.meta]["P_CLIP_MIN"]
+            P[P > config["Stats"][args.meta]["P_CLIP_MAX"]] = config["Stats"][args.meta]["P_CLIP_MAX"]
+
+            
+            
+            mask = ~untrustworthy  # True = trustworthy / valid data
 
 
             new_df = pd.DataFrame({

@@ -20,6 +20,7 @@ with open(f"{ROOT}/config/config.json", "r") as file:
 
 class dataset_csv(Dataset):
     def __init__(self, folder: str,
+                 meta: str,
                  grid_size: int = 256):
 
         self.folder = Path(folder)
@@ -31,13 +32,9 @@ class dataset_csv(Dataset):
             if Path(name).suffix.lower() in allowed_exts
         ]
 
-        self.transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Resize((256, 256)),
-            transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),  # -> [-1, 1]
-        ])
-
         self.grid_size = grid_size
+
+        self.meta = meta
 
     def __len__(self):
         return len(self.all_pths)
@@ -55,28 +52,33 @@ class dataset_csv(Dataset):
         v = df["v (m/s)"].values.astype(np.float32)
         P = df["p (Pa)"].values.astype(np.float32)
 
-        u = (u - config["Stats"]["U_MEAN"])/config["Stats"]["U_STD"]
-        v = (v - config["Stats"]["V_MEAN"])/config["Stats"]["V_STD"]
-        P = (P - config["Stats"]["P_MEAN"])/config["Stats"]["P_STD"]
+        # drop rows flagged untrustworthy upstream (create_dataset.py's, mask column), plus defensively drop any remaining NaNs
+        # this second (64x64 -> 256x256) interpolation pass.
+        if "mask" in df.columns:
+            valid = df["mask"].values.astype(bool)
+        else:
+            valid = np.ones_like(x, dtype=bool)
+
+        valid = valid & ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(u) & ~np.isnan(v) & ~np.isnan(P)
+
+        x, y, u, v, P = x[valid], y[valid], u[valid], v[valid], P[valid]
 
         L = x.max() - x.min()
         x = (x - x.min()) / L
         height = (y.max() - y.min()) / L
-        offset = (1 - height)/2
+        offset = (1 - height) / 2
         y = (y - y.min()) / L + offset
 
-        points = np.stack([x, y], axis=1)  # (N, 3)
+        points = np.stack([x, y], axis=1)  # (N, 2)
 
-        # interpolate u, v, P onto regular grid
-        # regular grid to interpolate onto
         lin = np.linspace(0, 1, self.grid_size)
         grid_x, grid_y = np.meshgrid(lin, lin)  # (grid_size, grid_size)
 
-        v_grid = griddata(points, v, (grid_x, grid_y), method="linear", fill_value = np.nan)
-        u_grid = griddata(points, u, (grid_x, grid_y), method="linear", fill_value = np.nan)
-        P_grid = griddata(points, P, (grid_x, grid_y), method="linear", fill_value = np.nan)
+        v_grid = griddata(points, v, (grid_x, grid_y), method="linear", fill_value=np.nan)
+        u_grid = griddata(points, u, (grid_x, grid_y), method="linear", fill_value=np.nan)
+        P_grid = griddata(points, P, (grid_x, grid_y), method="linear", fill_value=np.nan)
 
-        mask = ~np.isnan(u_grid)          # (H,W)
+        mask = ~(np.isnan(u_grid) | np.isnan(v_grid) | np.isnan(P_grid))  # (H,W)
         mask = mask.astype(np.float32)
 
         # replacing NaN with 0 but remembering NaN in mask
@@ -84,48 +86,55 @@ class dataset_csv(Dataset):
         v_grid = np.nan_to_num(v_grid, nan=0.0)
         P_grid = np.nan_to_num(P_grid, nan=0.0)
 
+        # taking care of extreme values
+        u_grid[u_grid < config["Stats"][self.meta]["U_CLIP_MIN"]] = config["Stats"][self.meta]["U_CLIP_MIN"]
+        u_grid[u_grid > config["Stats"][self.meta]["U_CLIP_MAX"]] = config["Stats"][self.meta]["U_CLIP_MAX"]
+
+        v_grid[v_grid < config["Stats"][self.meta]["V_CLIP_MIN"]] = config["Stats"][self.meta]["V_CLIP_MIN"]
+        v_grid[v_grid > config["Stats"][self.meta]["V_CLIP_MAX"]] = config["Stats"][self.meta]["V_CLIP_MAX"]
+
+        P_grid[P_grid < config["Stats"][self.meta]["P_CLIP_MIN"]] = config["Stats"][self.meta]["P_CLIP_MIN"]
+        P_grid[P_grid > config["Stats"][self.meta]["P_CLIP_MAX"]] = config["Stats"][self.meta]["P_CLIP_MAX"]
+
+
+        # normalising
+        u_grid = (u_grid - config["Stats"][self.meta]["U_MEAN"]) / config["Stats"][self.meta]["U_STD"]
+        v_grid = (v_grid - config["Stats"][self.meta]["V_MEAN"]) / config["Stats"][self.meta]["V_STD"]
+        P_grid = (P_grid - config["Stats"][self.meta]["P_MEAN"]) / config["Stats"][self.meta]["P_STD"]
+
+
         uvp_grid = np.stack([u_grid, v_grid, P_grid], axis=0).astype(np.float32)  # (3, 256, 256)
 
         number = float(selected.stem.split("_")[-1])
 
-        return uvp_grid, (number - config["Stats"]["Re_Mean"])/config["Stats"]["Re_Std"], mask
+        return uvp_grid, (number - config["Stats"][self.meta]["Re_Mean"]) / config["Stats"][self.meta]["Re_Std"], mask
 
 
 if __name__ == "__main__":
-    dataset     = dataset_csv(folder = "Data/Problems/Backward_Facing_Step_domain")
-    dataloader  = DataLoader(dataset, batch_size = 1, shuffle = True)
+
+    dataset = dataset_csv(folder="Data/Problems/Lid_Driven_domain", meta = "Lid_Driven")
+    dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
 
     uvp_grid, number, mask = next(iter(dataloader))
 
-    u = uvp_grid[0][0, :, :]                                                 # (grid_size, grid_size)
-    v = uvp_grid[0][1, :, :]                                                 # (grid_size, grid_size)
-    P = uvp_grid[0][2, :, :]                                                 # (grid_size, grid_size)
+    u = uvp_grid[0][0, :, :]
+    v = uvp_grid[0][1, :, :]
+    P = uvp_grid[0][2, :, :]
     m = mask[0]
 
     print("u_min", u.min())
     print("u_max", u.max())
-    print("u_mean", u.mean())
-    print("u_std", u.std())
 
     print("v_min", v.min())
     print("v_max", v.max())
-    print("v_mean", v.mean())
-    print("v_std", v.std())
 
     print("P_min", P.min())
     print("P_max", P.max())
-    print("P_mean", P.mean())
-    print("P_std", P.std())
-    
+
     print(uvp_grid.shape, number.shape, mask.shape)
-
-    ### plotting ###
-
-    
 
     x_grid = torch.linspace(0, 1, 256)
     y_grid = torch.linspace(0, 1, 256)
-
 
     fig, axes = plt.subplots(1, 4, figsize=(14, 5))
 
@@ -148,4 +157,3 @@ if __name__ == "__main__":
     plt.suptitle(f"Re (normalised): {number.item()}")
     plt.tight_layout()
     plt.show()
-    
