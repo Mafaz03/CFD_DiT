@@ -7,10 +7,15 @@ from diffusers.models import AutoencoderKL
 SD_VAE_SCALING_FACTOR = 0.18215  
 
 class VAE(torch.nn.Module):
-    def __init__(self, device, freeze: bool, scaling_factor = None, path = "stabilityai/sd-vae-ft-mse"):
+    def __init__(self, device, freeze: bool, scaling_factor = None, path = "stabilityai/sd-vae-ft-mse", load_weights = None):
         super().__init__()
 
-        self.vae = AutoencoderKL.from_pretrained(path)
+        self.vae: torch.nn.Module = AutoencoderKL.from_pretrained(path)
+        
+        if load_weights: 
+            self.vae.load_state_dict(torch.load(load_weights, map_location = device))
+            print("[VAE] weights loaded!")
+
         self.vae = self.vae.to(device)
 
         self.scaling_factor = SD_VAE_SCALING_FACTOR if not scaling_factor else scaling_factor

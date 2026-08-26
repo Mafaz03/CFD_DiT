@@ -47,6 +47,8 @@ def train(start_epoch, epochs, dataloader, dit, vae, scheduler, device, acc_step
             mask = F.interpolate(mask, size=sq.shape[-2:], mode="nearest")  # [B, 1, 32, 32]
             sq = sq * mask
             loss = sq.sum() / mask.sum()
+
+            true_loss = (sq * mask).sum() / mask.sum()
             
             loss = loss / acc_steps
             loss.backward()
@@ -54,7 +56,7 @@ def train(start_epoch, epochs, dataloader, dit, vae, scheduler, device, acc_step
                 optimizer.step()
                 optimizer.zero_grad()
 
-            epoch_loss += loss.item()
+            epoch_loss += true_loss.item()
 
             if step_count % 50 == 0:
                 avg_so_far = epoch_loss / step_count

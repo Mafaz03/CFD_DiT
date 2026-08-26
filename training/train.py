@@ -33,6 +33,7 @@ scheduler = LinearNoiseScheduler(num_timesteps  = config["Scheduler"]["num_times
 
 
 vae = VAE(device = device, freeze = True, scaling_factor = config["VAE"]["scaling_factor"], path = f"{ROOT}/pretrained/sd-vae-ft-mse").to(device)
+vae.load_state_dict(torch.load(f"{ROOT}/models/VAE.pth", map_location = device))
 
 dit = DiT(d_model           = config["DiT"]["d_model"],
           g_channels        = config["DiT"]["g_channels"],
@@ -56,7 +57,10 @@ print("Training DiT ......")
 with open(f"{ROOT}/config/config.json", "r") as file:
     config = json.load(file)
 
-dataset    = dataset_cfd.dataset_csv(folder = f"{ROOT}/Data/Problems/{config['Data']['name']}")
+dataset    = dataset_cfd.dataset_csv(folder = f"{ROOT}/Data/Problems/{config['Data']['name']}", meta = config['Data']['meta'], grid_size = 256)
 dataloader = DataLoader(dataset, batch_size = config["Training"]["batch_size"], shuffle=True, num_workers=2)
 
+if config['saves']['load_model_for_traning']:
+    dit.load_state_dict(torch.load(f"{ROOT}/{config['saves']['DiT_Path']}", map_location = device))
+    
 dit_losses = train(0, config["Training"]["epochs"], dataloader, dit, vae, scheduler, device, acc_steps = config["Training"]["accumulation_step"])

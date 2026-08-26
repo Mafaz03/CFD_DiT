@@ -10,45 +10,55 @@
     "num_heads": 12
   },
   "VAE": {
-    "scaling_factor": 0.18215
+    "scaling_factor": 0.18215,
+    "kl_weight": 1e-06
   },
   "Scheduler": {
     "num_timesteps": 1000,
     "beta_start": 0.0001,
     "beta_end": 0.02
   },
+  "Training_VAE": {
+    "epochs": 50,
+    "batch_size": 10,
+    "accumulation_step": 10,
+    "learning_rate": 1e-05
+  },
   "Training": {
     "epochs": 50,
-    "batch_size": 32,
-    "accumulation_step": 4,
+    "batch_size": 128,
+    "accumulation_step": 1,
     "learning_rate": 0.0001
   },
   "saves": {
     "DiT_Path": "DiT.pth",
     "DiT_Save_every": 5,
-    "load_model_for_traning": 1
+    "load_model_for_traning": 0,
+    "VAE_Path": "VAE.pth",
+    "VAE_Save_every": 5
   },
   "Data": {
-    "name": "Lid_Driven_domain"
+    "name": "Lid_Driven_domain",
+    "meta": "Lid_Driven"
   },
   "Stats": {
     "Lid_Driven": {
-      "Re_Mean": 23.0,
-      "Re_Std": 12.84523257866513,
-      "Re_Min": 1.0,
-      "Re_Max": 45.0,
-      "U_MEAN": 0.22486802229931074,
-      "U_STD": 0.18444557260220928,
-      "U_CLIP_MIN": -0.027696040374999998,
-      "U_CLIP_MAX": 0.7617200160000025,
-      "V_MEAN": 0.000517664439221806,
-      "V_STD": 0.04338502275770833,
-      "V_CLIP_MIN": -0.23921559215,
-      "V_CLIP_MAX": 0.24006631790000096,
-      "P_MEAN": 0.025892673941465463,
-      "P_STD": 0.03762828470824172,
-      "P_CLIP_MIN": -0.04075918479499999,
-      "P_CLIP_MAX": 0.2466695679500002
+      "Re_Mean": 1191.50125,
+      "Re_Std": 739.8270885769103,
+      "Re_Min": 8.43,
+      "Re_Max": 2499.1,
+      "U_MEAN": 0.001885979670983462,
+      "U_STD": 0.21892543586097757,
+      "U_CLIP_MIN": -0.386160585088555,
+      "U_CLIP_MAX": 0.937577229718293,
+      "V_MEAN": 8.776641850474182e-05,
+      "V_STD": 0.19741505656248792,
+      "V_CLIP_MIN": -0.6078371677139057,
+      "V_CLIP_MAX": 0.3861409418381001,
+      "P_MEAN": -0.04134886405876749,
+      "P_STD": 0.04523745804606463,
+      "P_CLIP_MIN": -0.11903518427768289,
+      "P_CLIP_MAX": 0.21597885633105846
     },
     "Flow_Past_Cylinder": {
       "U_CLIP_MIN": -0.10985,
@@ -71,18 +81,18 @@
       "Re_Std": 144.33641259224922,
       "Re_Min": 2.0,
       "Re_Max": 500.0,
-      "U_MEAN": 0.004171549014661619,
-      "U_STD": 0.0068194705665095496,
-      "U_CLIP_MIN": -0.004196289493566063,
-      "U_CLIP_MAX": 0.029394129981564907,
-      "V_MEAN": 0.00012335918075953445,
-      "V_STD": 0.00041672048416828536,
-      "V_CLIP_MIN": -0.0005369441750104655,
-      "V_CLIP_MAX": 0.002902471837035926,
-      "P_MEAN": 0.9901965220685298,
-      "P_STD": 0.03261468663807497,
-      "P_CLIP_MIN": 0.8962084695917069,
-      "P_CLIP_MAX": 1.0227761194742155
+      "U_MEAN": 0.007215744152938864,
+      "U_STD": 0.009266127075195203,
+      "U_CLIP_MIN": -0.00244220186955864,
+      "U_CLIP_MAX": 0.03246205603083172,
+      "V_MEAN": 7.050392070081702e-05,
+      "V_STD": 0.0002185110016450857,
+      "V_CLIP_MIN": -0.0005918399878304645,
+      "V_CLIP_MAX": 0.0006782307157326848,
+      "P_MEAN": 0.4784070000000003,
+      "P_STD": 2.7755575615628914e-16,
+      "P_CLIP_MIN": 0.478407,
+      "P_CLIP_MAX": 0.478407
     }
   }
 }

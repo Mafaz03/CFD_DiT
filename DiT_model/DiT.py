@@ -95,28 +95,45 @@ def get_time_embedding(time_steps, temb_dim):
     t_emb = torch.cat([torch.sin(t_emb), torch.cos(t_emb)], dim=-1)
     return t_emb
 
-def get_number_embedding(n: torch.Tensor, nemb_dim: int):
-    """
-    Fourier embedding for continuous values in [0, max_value].
-    Scales input to [0, 1] first so frequencies are calibrated correctly.
-    """
-    # n = (n.float() - config["Stats"]["Re_Mean"]) / config["Stats"]["Re_Std"]       # normalize
-    n = n.float()
-    assert nemb_dim % 2 == 0
     
-    # factor = 10000^(2i/d_model)
-    factor = 10000 ** ((torch.arange(
-        start=0,
-        end=nemb_dim // 2,
-        dtype=torch.float32,
-        device=n.device) / (nemb_dim // 2))
-    )
 
-    # pos / factor
-    # timesteps B -> [B, 1] -> B, nemb_dim
-    n_emb = n.unsqueeze(-1).repeat(1, nemb_dim // 2) / factor
-    n_emb = torch.cat([torch.sin(n_emb), torch.cos(n_emb)], dim=-1)
-    return n_emb
+# def get_number_embedding(n: torch.Tensor, nemb_dim: int):
+#     """
+#     Fourier embedding for continuous values in [0, max_value].
+#     Scales input to [0, 1] first so frequencies are calibrated correctly.
+#     """
+#     # n = (n.float() - config["Stats"]["Re_Mean"]) / config["Stats"]["Re_Std"]       # normalize
+#     n = n.float()
+#     assert nemb_dim % 2 == 0
+    
+#     # factor = 10000^(2i/d_model)
+#     factor = 10000 ** ((torch.arange(
+#         start=0,
+#         end=nemb_dim // 2,
+#         dtype=torch.float32,
+#         device=n.device) / (nemb_dim // 2))
+#     )
+
+#     # pos / factor
+#     # timesteps B -> [B, 1] -> B, nemb_dim
+#     n_emb = n.unsqueeze(-1).repeat(1, nemb_dim // 2) / factor
+#     n_emb = torch.cat([torch.sin(n_emb), torch.cos(n_emb)], dim=-1)
+#     return n_emb
+
+class NumberEmbedding(torch.nn.Module):
+    def __init__(self, nemb_dim: int, d_model: int):
+        super().__init__()
+        self.register_buffer("freqs", torch.randn(nemb_dim // 2) * 10)
+        self.proj = torch.nn.Sequential(
+            torch.nn.Linear(nemb_dim, d_model),
+            torch.nn.SiLU(),
+            torch.nn.Linear(d_model, d_model),
+        )
+
+    def forward(self, n: torch.Tensor):
+        x = n.float().unsqueeze(1) * self.freqs.unsqueeze(0)  # [B, nemb_dim//2]
+        x = torch.cat([torch.sin(x), torch.cos(x)], dim=-1)   # [B, nemb_dim]
+        return self.proj(x)
 
 
 def get_patch_position_embedding(pos_emb_dim, grid_size: Tuple, device):
@@ -234,11 +251,13 @@ class DiT(torch.nn.Module):
             torch.nn.Linear(self.d_model, self.d_model)
         )
 
-        self.n_proj = torch.nn.Sequential(
-            torch.nn.Linear(self.number_emb_dim, self.d_model),
-            torch.nn.SiLU(),
-            torch.nn.Linear(self.d_model, self.d_model)
-        )
+        # self.n_proj = torch.nn.Sequential(
+        #     torch.nn.Linear(self.number_emb_dim, self.d_model),
+        #     torch.nn.SiLU(),
+        #     torch.nn.Linear(self.d_model, self.d_model)
+        # )
+
+        self.number_embed = NumberEmbedding(self.number_emb_dim, self.d_model)
         
 
         # All Transformer Layers
@@ -264,8 +283,8 @@ class DiT(torch.nn.Module):
         torch.nn.init.normal_(self.t_proj[0].weight, std=0.02)
         torch.nn.init.normal_(self.t_proj[2].weight, std=0.02)
 
-        torch.nn.init.normal_(self.n_proj[0].weight, std=0.02)
-        torch.nn.init.normal_(self.n_proj[2].weight, std=0.02)
+        torch.nn.init.normal_(self.number_embed.proj[0].weight, std=0.02)
+        torch.nn.init.normal_(self.number_embed.proj[2].weight, std=0.02)
 
         torch.nn.init.constant_(self.adaptive_norm_layer[-1].weight, 0)
         torch.nn.init.constant_(self.adaptive_norm_layer[-1].bias, 0)
@@ -286,10 +305,12 @@ class DiT(torch.nn.Module):
         # Compute Timestep representation
         # t_emb -> (Batch, timestep_emb_dim)
         t_emb = get_time_embedding(torch.as_tensor(t).long(), self.timestep_emb_dim)
-        n_emb = get_number_embedding(torch.as_tensor(n), self.number_emb_dim)
+        # n_emb = get_number_embedding(torch.as_tensor(n), self.number_emb_dim)
+        n_emb = self.number_embed(n.float())
 
         # (Batch, timestep_emb_dim) -> (Batch, d_model)
-        c_emb = self.t_proj(t_emb) + self.n_proj(n_emb)
+        # c_emb = self.t_proj(t_emb) + self.n_proj(n_emb)
+        c_emb = self.t_proj(t_emb) + n_emb
 
         # Go through the transformer layers
         for layer in self.layers:
