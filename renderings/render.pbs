@@ -1,0 +1,16 @@
+#!/bin/bash
+#PBS -N Render_DiT_preds
+#PBS -q gpu
+#PBS -l select=1:host=node9:ncpus=48:ngpus=1
+#PBS -o /storage/users/mahesh/Mafaz/Projects/CFD_DiT/Render.out
+#PBS -e /storage/users/mahesh/Mafaz/Projects/CFD_DiT/Render.err
+
+cd "$PBS_O_WORKDIR"
+
+source $USER_DIR/Mafaz/myenv/bin/activate
+
+export CUDA_VISIBLE_DEVICES="$NODE9_MIG_UUID"
+
+echo "Job started on $(hostname) at $(date)"
+python3 -m renderings.render --VAE VAE.pth --DiT DiT.pth --solver DDIM --steps 50 --data_folder Lid_Driven_domain --meta Lid_Driven --save_file lid_driven
+echo "Job finished at $(date)"
