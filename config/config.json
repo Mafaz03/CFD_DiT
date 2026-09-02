@@ -31,15 +31,20 @@
     "learning_rate": 0.0001
   },
   "saves": {
-    "DiT_Path": "DiT.pth",
+    "DiT_Path": "models/DiT.pth",
     "DiT_Save_every": 5,
     "load_model_for_traning": 0,
-    "VAE_Path": "VAE.pth",
-    "VAE_Save_every": 5
+    "VAE_Path": "models/VAE.pth",
+    "VAE_Save_every": 5,
+    "load_model_for_traning_vae": 1
   },
   "Data": {
     "name": "Lid_Driven_domain",
     "meta": "Lid_Driven"
+  },
+  "Data_VAE": {
+    "name": "Flow_Past_Cylinder_domain",
+    "meta": "Flow_Past_Cylinder"
   },
   "Stats": {
     "Lid_Driven": {
@@ -61,20 +66,22 @@
       "P_CLIP_MAX": 0.21597885633105846
     },
     "Flow_Past_Cylinder": {
-      "U_CLIP_MIN": -0.10985,
-      "U_CLIP_MAX": 0.912914,
-      "V_CLIP_MIN": -0.503924,
-      "V_CLIP_MAX": 0.499029,
-      "P_CLIP_MIN": -0.157715,
-      "P_CLIP_MAX": 0.478407,
       "Re_Mean": 23.0,
-      "Re_Std": 12.845233,
-      "U_MEAN": 0.226881,
-      "U_STD": 0.175157,
-      "V_MEAN": 0.027209,
-      "V_STD": 1.0493,
-      "P_MEAN": 0.022523,
-      "P_STD": 0.029821
+      "Re_Std": 12.84523257866513,
+      "Re_Min": 1.0,
+      "Re_Max": 45.0,
+      "U_MEAN": 0.2266694027336263,
+      "U_STD": 0.17418913535095068,
+      "U_CLIP_MIN": -8.911577792022897e-18,
+      "U_CLIP_MAX": 0.704181885336341,
+      "V_MEAN": 7.256317614793958e-05,
+      "V_STD": 0.02141688347132905,
+      "V_CLIP_MIN": -0.1227815730123177,
+      "V_CLIP_MAX": 0.12626186380146026,
+      "P_MEAN": 0.022724535336538468,
+      "P_STD": 0.02811818226418608,
+      "P_CLIP_MIN": -0.01610409247389056,
+      "P_CLIP_MAX": 0.19029358072233604
     },
     "Backward_Facing_Step": {
       "Re_Mean": 251.0,

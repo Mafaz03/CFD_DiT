@@ -25,7 +25,7 @@ batch_size = config["Training_VAE"]["batch_size"]
 lr         = config["Training_VAE"]["learning_rate"]
 acc_steps  = config["Training_VAE"]["accumulation_step"]
 
-dataset    = dataset_cfd.dataset_csv(folder = f"{ROOT}/Data/Problems/{config['Data']['name']}", meta = "Lid_Driven")
+dataset    = dataset_cfd.dataset_csv(folder = f"{ROOT}/Data/Problems/{config['Data_VAE']['name']}", meta = config['Data_VAE']['meta'])
 dataloader = DataLoader(dataset, batch_size = batch_size, shuffle=True,)# num_workers=2)
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -38,6 +38,8 @@ vae = VAE(
     ).to(device)
 # use path = `stabilityai/sd-vae-ft-mse` for pulling weights from the internet
 
+if config["saves"]["load_model_for_traning_vae"]:
+    vae.load_state_dict(torch.load(f"{ROOT}/{config['saves']['VAE_Path']}", map_location = device))
 
 optimizer = torch.optim.Adam(
     vae.parameters(),
@@ -78,4 +80,4 @@ for epoch in range(num_epochs):
     )
 
     if epoch % config["saves"]["VAE_Save_every"] == 0:
-                torch.save(vae.state_dict(), config["saves"]["VAE_Path"])
+        torch.save(vae.state_dict(), config["saves"]["VAE_Path"])

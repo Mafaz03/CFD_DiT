@@ -349,7 +349,8 @@ with imageio.get_writer(f"{ROOT}/renderings/renders/{args.save_file}.mp4", fps=1
         div_pred          = np.array(div_pred)
         momentum_res_pred = np.array(momentum_res_pred)
 
-        mask = np.ones((256, 256))
+        df = pd.read_csv(f"{ROOT}/Data/Problems/{args.data_folder}/Re_{re}.csv", index_col = 0)
+        mask = np.array(df['mask']).reshape(256, 256).astype("float32")
         bool_mask = mask.astype(bool)
 
         # U
@@ -489,3 +490,6 @@ with imageio.get_writer(f"{ROOT}/renderings/renders/{args.save_file}.mp4", fps=1
         frame = np.asarray(fig.canvas.renderer.buffer_rgba())
         writer.append_data(frame)
         plt.close(fig)
+
+        # plt.show()
+        # break
