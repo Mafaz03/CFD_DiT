@@ -7,7 +7,10 @@
     "timestep_emb_dim": 768,
     "number_emb_dim": 768,
     "num_layers": 12,
-    "num_heads": 12
+    "num_heads": 12,
+
+    "num_frequencies": 96,
+    "sigmas": [1.0, 4.0, 8.0]
   },
   "VAE": {
     "scaling_factor": 0.18215,
@@ -28,12 +31,18 @@
     "epochs": 50,
     "batch_size": 128,
     "accumulation_step": 1,
-    "learning_rate": 0.0001
+    "learning_rate": 0.0001,
+
+    "physics_informed": 1,
+
+    "bc_loss_weight": 1,
+    "bc_snr_weighting": 1
   },
   "saves": {
     "DiT_Path": "models/DiT.pth",
     "DiT_Save_every": 5,
     "load_model_for_traning": 0,
+    
     "VAE_Path": "models/VAE.pth",
     "VAE_Save_every": 5,
     "load_model_for_traning_vae": 1
@@ -88,16 +97,16 @@
       "Re_Std": 144.33641259224922,
       "Re_Min": 2.0,
       "Re_Max": 500.0,
-      "U_MEAN": 0.007215744152938864,
-      "U_STD": 0.009266127075195203,
-      "U_CLIP_MIN": -0.00244220186955864,
-      "U_CLIP_MAX": 0.03246205603083172,
-      "V_MEAN": 7.050392070081702e-05,
-      "V_STD": 0.0002185110016450857,
-      "V_CLIP_MIN": -0.0005918399878304645,
-      "V_CLIP_MAX": 0.0006782307157326848,
-      "P_MEAN": 0.4784070000000003,
-      "P_STD": 2.7755575615628914e-16,
+      "U_MEAN": 0.006444109431531778,
+      "U_STD": 0.007895085027726218,
+      "U_CLIP_MIN": -0.00412199751793012,
+      "U_CLIP_MAX": 0.030574730672774057,
+      "V_MEAN": 0.0002267953665266773,
+      "V_STD": 0.0005639683768566144,
+      "V_CLIP_MIN": -0.000490415895262397,
+      "V_CLIP_MAX": 0.003347288864005842,
+      "P_MEAN": 0.4784070000000009,
+      "P_STD": 8.881784197001252e-16,
       "P_CLIP_MIN": 0.478407,
       "P_CLIP_MAX": 0.478407
     }

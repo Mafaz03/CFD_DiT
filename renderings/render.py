@@ -25,6 +25,8 @@ from VAE import VAE
 
 import imageio.v2 as imageio
 
+from DiT_model import FourierDiT
+
 import json
 
 with open(f"{ROOT}/config/config.json", "r") as file:
@@ -75,15 +77,32 @@ scheduler = LinearNoiseScheduler(num_timesteps  = num_timesteps,
                                      beta_end   = beta_end)
 
 
-dit = DiT(d_model          = config["DiT"]["d_model"],
-          g_channels       = config["DiT"]["g_channels"],
-          grid_size        = config["DiT"]["grid_size"],
-          patch_size       = config["DiT"]["patch_size"],
-          timestep_emb_dim = config["DiT"]["timestep_emb_dim"],
-          number_emb_dim   = config["DiT"]["number_emb_dim"],
-          num_layers       = config["DiT"]["num_layers"],
-          num_heads        = config["DiT"]["num_heads"])
+physics_informed = config["Training"].get("physics_informed", True)
 
+if physics_informed:
+    dit = FourierDiT(
+            d_model               = config["DiT"]["d_model"],
+            g_channels            = config["DiT"]["g_channels"],
+            grid_size             = config["DiT"]["grid_size"],
+            patch_size            = config["DiT"]["patch_size"],
+            timestep_emb_dim      = config["DiT"]["timestep_emb_dim"],
+            number_emb_dim        = config["DiT"]["number_emb_dim"],
+            num_layers            = config["DiT"]["num_layers"],
+            num_heads             = config["DiT"]["num_heads"],
+            
+            out_channels          = 3,    # (u, v, p)
+            num_frequencies       = config["DiT"]["num_frequencies"], 
+            sigmas                = config["DiT"]["sigmas"],
+        ).to(device)
+else:
+    dit = DiT(d_model         = config["DiT"]["d_model"],
+            g_channels        = config["DiT"]["g_channels"],
+            grid_size         = config["DiT"]["grid_size"],
+            patch_size        = config["DiT"]["patch_size"],
+            timestep_emb_dim  = config["DiT"]["timestep_emb_dim"],
+            number_emb_dim    = config["DiT"]["number_emb_dim"],
+            num_layers        = config["DiT"]["num_layers"],
+            num_heads         = config["DiT"]["num_heads"])
 vae.eval()
 dit.eval()
 
@@ -325,7 +344,8 @@ errors = {}
 frames = []
 
 with imageio.get_writer(f"{ROOT}/renderings/renders/{args.save_file}.mp4", fps=15) as writer:
-    for re in tqdm(re_s):
+    for idx, re in enumerate(tqdm(re_s)):
+        print(f"{idx+1} out of {len(re_s)}")
 
         err = {}
 

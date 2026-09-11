@@ -10,7 +10,7 @@ with open(f"{ROOT}/config/config.json", "r") as file:
     config = json.load(file)
 
 
-def train(start_epoch, epochs, dataloader, dit, vae, scheduler, device, acc_steps):
+def train_dit(start_epoch, epochs, dataloader, dit, vae, scheduler, device, acc_steps, **kwargs):
     optimizer = AdamW(dit.parameters(), lr=config["Training"]["learning_rate"], weight_decay=0)
     # loss_fn   = torch.nn.MSELoss()
 
@@ -21,7 +21,7 @@ def train(start_epoch, epochs, dataloader, dit, vae, scheduler, device, acc_step
     for epoch in range(start_epoch, epochs):
         epoch_loss = 0.0
         step_count = 0
-        for images, numbers, mask in dataloader:
+        for images, numbers, mask, _, _ in dataloader:
             step_count += 1
             images  = images.to(device)
             numbers = numbers.float().to(device)

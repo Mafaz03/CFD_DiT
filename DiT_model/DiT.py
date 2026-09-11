@@ -209,7 +209,9 @@ class PatchEmbedding(torch.nn.Module):
         out = self.patch_embed(out)
 
         # Add 2d sinusoidal position embeddings
-        pos_embed = get_patch_position_embedding(pos_emb_dim=self.d_model, grid_size=(grid_size_h, grid_size_w), device=x.device)
+        pos_embed = get_patch_position_embedding(pos_emb_dim = self.d_model, 
+                                                 grid_size = (grid_size_h, grid_size_w), 
+                                                 device = x.device)
         out += pos_embed
         return out # [B, grid_height/patch_height * grid_width/patch_width, d_model]
     

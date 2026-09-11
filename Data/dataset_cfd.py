@@ -5,7 +5,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from torchvision import transforms
 import numpy as np
 
 from scipy.interpolate import griddata
@@ -17,13 +16,55 @@ ROOT = Path(__file__).resolve().parent.parent
 with open(f"{ROOT}/config/config.json", "r") as file:
     config = json.load(file)
 
+import numpy as np
+from scipy.ndimage import binary_erosion
+
+
+def get_boundary_coordinates(mask, u_grid, v_grid, U, V, tol=1e-1):
+    """
+    Returns boundary-condition masks with the same shape as the input grid.
+
+    wall_mask:
+        1 where boundary AND u = 0, v = 0
+        0 elsewhere
+
+    uv_mask:
+        1 where boundary AND u = U, v = V
+        0 elsewhere
+    """
+
+    # Find cells directly on the edge of the mask
+    eroded = binary_erosion(mask.astype(bool))
+    boundary = mask.astype(bool) & ~eroded
+
+    # u = 0, v = 0
+    wall = (
+        np.isclose(u_grid, 0.0, atol=tol) &
+        np.isclose(v_grid, 0.0, atol=tol)
+    )
+
+    # u = U, v = V
+    uv = (
+        np.isclose(u_grid, U, atol=tol) &
+        np.isclose(v_grid, V, atol=tol)
+    )
+
+    # Only accept velocity conditions on the boundary
+    wall_mask = (boundary & wall).astype(np.float32)
+    uv_mask = (boundary & uv).astype(np.float32)
+
+    return wall_mask, uv_mask
 
 class dataset_csv(Dataset):
-    def __init__(self, folder: str,
-                 meta: str,
-                 grid_size: int = 256):
 
+    def __init__(
+        self,
+        folder: str,
+        meta: str,
+        grid_size: int = 256
+    ):
         self.folder = Path(folder)
+
         allowed_exts = {".csv"}
 
         self.all_pths = [
@@ -33,7 +74,6 @@ class dataset_csv(Dataset):
         ]
 
         self.grid_size = grid_size
-
         self.meta = meta
 
     def __len__(self):
@@ -52,108 +92,376 @@ class dataset_csv(Dataset):
         v = df["v (m/s)"].values.astype(np.float32)
         P = df["p (Pa)"].values.astype(np.float32)
 
-        # drop rows flagged untrustworthy upstream (create_dataset.py's, mask column), plus defensively drop any remaining NaNs
-        # this second (64x64 -> 256x256) interpolation pass.
+        # Original mask
         if "mask" in df.columns:
-            valid = df["mask"].values.astype(bool)
+            original_mask = df["mask"].values.astype(np.float32)
         else:
-            valid = np.ones_like(x, dtype=bool)
+            original_mask = np.ones_like(x, dtype=np.float32)
 
-        valid = valid & ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(u) & ~np.isnan(v) & ~np.isnan(P)
-
-        x, y, u, v, P = x[valid], y[valid], u[valid], v[valid], P[valid]
+        # --------------------------------------------------
+        # Normalize coordinates
+        # --------------------------------------------------
 
         L = x.max() - x.min()
+
         x = (x - x.min()) / L
+
         height = (y.max() - y.min()) / L
         offset = (1 - height) / 2
+
         y = (y - y.min()) / L + offset
 
-        points = np.stack([x, y], axis=1)  # (N, 2)
+        # Points BEFORE filtering
+        points = np.stack([x, y], axis=1)
+
+        # --------------------------------------------------
+        # Grid
+        # --------------------------------------------------
 
         lin = np.linspace(0, 1, self.grid_size)
-        grid_x, grid_y = np.meshgrid(lin, lin)  # (grid_size, grid_size)
+        grid_x, grid_y = np.meshgrid(lin, lin)
 
-        v_grid = griddata(points, v, (grid_x, grid_y), method="linear", fill_value=np.nan)
-        u_grid = griddata(points, u, (grid_x, grid_y), method="linear", fill_value=np.nan)
-        P_grid = griddata(points, P, (grid_x, grid_y), method="linear", fill_value=np.nan)
+        # --------------------------------------------------
+        # Create mask from ORIGINAL mask
+        # --------------------------------------------------
 
-        mask = ~(np.isnan(u_grid) | np.isnan(v_grid) | np.isnan(P_grid))  # (H,W)
-        mask = mask.astype(np.float32)
+        mask_grid = griddata(
+            points,
+            original_mask,
+            (grid_x, grid_y),
+            method="nearest",
+            fill_value=0
+        )
 
-        # replacing NaN with 0 but remembering NaN in mask
+        mask = (mask_grid > 0.5).astype(np.float32)
+
+        # --------------------------------------------------
+        # Valid CFD points
+        # --------------------------------------------------
+
+        valid = (
+            (original_mask > 0.5) &
+            ~np.isnan(x) &
+            ~np.isnan(y) &
+            ~np.isnan(u) &
+            ~np.isnan(v) &
+            ~np.isnan(P)
+        )
+
+        x = x[valid]
+        y = y[valid]
+        u = u[valid]
+        v = v[valid]
+        P = P[valid]
+
+        # IMPORTANT: recreate points after filtering
+        points = np.stack([x, y], axis=1)
+
+        # --------------------------------------------------
+        # Interpolate u, v, P
+        # --------------------------------------------------
+
+        v_grid = griddata(
+            points,
+            v,
+            (grid_x, grid_y),
+            method="linear",
+            fill_value=np.nan
+        )
+
+        u_grid = griddata(
+            points,
+            u,
+            (grid_x, grid_y),
+            method="linear",
+            fill_value=np.nan
+        )
+
+        P_grid = griddata(
+            points,
+            P,
+            (grid_x, grid_y),
+            method="linear",
+            fill_value=np.nan
+        )
+
+        # Replace NaNs
         u_grid = np.nan_to_num(u_grid, nan=0.0)
         v_grid = np.nan_to_num(v_grid, nan=0.0)
         P_grid = np.nan_to_num(P_grid, nan=0.0)
 
-        # taking care of extreme values
-        u_grid[u_grid < config["Stats"][self.meta]["U_CLIP_MIN"]] = config["Stats"][self.meta]["U_CLIP_MIN"]
-        u_grid[u_grid > config["Stats"][self.meta]["U_CLIP_MAX"]] = config["Stats"][self.meta]["U_CLIP_MAX"]
+        # --------------------------------------------------
+        # Clip
+        # --------------------------------------------------
 
-        v_grid[v_grid < config["Stats"][self.meta]["V_CLIP_MIN"]] = config["Stats"][self.meta]["V_CLIP_MIN"]
-        v_grid[v_grid > config["Stats"][self.meta]["V_CLIP_MAX"]] = config["Stats"][self.meta]["V_CLIP_MAX"]
+        u_grid[u_grid < config["Stats"][self.meta]["U_CLIP_MIN"]] = \
+            config["Stats"][self.meta]["U_CLIP_MIN"]
 
-        P_grid[P_grid < config["Stats"][self.meta]["P_CLIP_MIN"]] = config["Stats"][self.meta]["P_CLIP_MIN"]
-        P_grid[P_grid > config["Stats"][self.meta]["P_CLIP_MAX"]] = config["Stats"][self.meta]["P_CLIP_MAX"]
+        u_grid[u_grid > config["Stats"][self.meta]["U_CLIP_MAX"]] = \
+            config["Stats"][self.meta]["U_CLIP_MAX"]
 
+        v_grid[v_grid < config["Stats"][self.meta]["V_CLIP_MIN"]] = \
+            config["Stats"][self.meta]["V_CLIP_MIN"]
 
-        # normalising
+        v_grid[v_grid > config["Stats"][self.meta]["V_CLIP_MAX"]] = \
+            config["Stats"][self.meta]["V_CLIP_MAX"]
+
+        P_grid[P_grid < config["Stats"][self.meta]["P_CLIP_MIN"]] = \
+            config["Stats"][self.meta]["P_CLIP_MIN"]
+
+        P_grid[P_grid > config["Stats"][self.meta]["P_CLIP_MAX"]] = \
+            config["Stats"][self.meta]["P_CLIP_MAX"]
+
+        # --------------------------------------------------
+        # Boundary coordinates
+        # --------------------------------------------------
+
+        wall_xy, uv_xy = get_boundary_coordinates(
+            mask,
+            u_grid,
+            v_grid,
+            U=1.0,
+            V=0.0
+        )
+
+        # --------------------------------------------------
+        # Normalize velocity / pressure
+        # --------------------------------------------------
+
         u_grid = (u_grid - config["Stats"][self.meta]["U_MEAN"]) / config["Stats"][self.meta]["U_STD"]
+
         v_grid = (v_grid - config["Stats"][self.meta]["V_MEAN"]) / config["Stats"][self.meta]["V_STD"]
+
         P_grid = (P_grid - config["Stats"][self.meta]["P_MEAN"]) / config["Stats"][self.meta]["P_STD"]
 
-
-        uvp_grid = np.stack([u_grid, v_grid, P_grid], axis=0).astype(np.float32)  # (3, 256, 256)
+        uvp_grid = np.stack([u_grid, v_grid, P_grid], axis=0).astype(np.float32)
 
         number = float(selected.stem.split("_")[-1])
 
-        return uvp_grid, (number - config["Stats"][self.meta]["Re_Mean"]) / config["Stats"][self.meta]["Re_Std"], mask
-
+        return (
+            uvp_grid,
+            (number - config["Stats"][self.meta]["Re_Mean"]) / config["Stats"][self.meta]["Re_Std"],
+            mask,
+            wall_xy,
+            uv_xy
+        )
 
 if __name__ == "__main__":
 
-    dataset = dataset_csv(folder="Data/Problems/Lid_Driven_domain", meta = "Lid_Driven")
-    dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
+    dataset = dataset_csv(
+        folder="Data/Problems/Backward_Facing_Step_domain",
+        meta="Backward_Facing_Step"
+    )
 
-    uvp_grid, number, mask = next(iter(dataloader))
+    dataloader = DataLoader(
+        dataset,
+        batch_size=1,
+        shuffle=True
+    )
 
-    u = uvp_grid[0][0, :, :]
-    v = uvp_grid[0][1, :, :]
-    P = uvp_grid[0][2, :, :]
-    m = mask[0]
+    uvp_grid, number, mask, wall_mask, uv_mask = next(iter(dataloader))
 
-    print("u_min", u.min())
-    print("u_max", u.max())
+    # --------------------------------------------------
+    # Remove batch dimension
+    # --------------------------------------------------
 
-    print("v_min", v.min())
-    print("v_max", v.max())
+    u = uvp_grid[0, 0].numpy()
+    v = uvp_grid[0, 1].numpy()
+    P = uvp_grid[0, 2].numpy()
 
-    print("P_min", P.min())
-    print("P_max", P.max())
+    m = mask[0].numpy()
 
-    print(uvp_grid.shape, number.shape, mask.shape)
+    wall_mask = wall_mask[0].numpy()
+    uv_mask = uv_mask[0].numpy()
 
-    x_grid = torch.linspace(0, 1, 256)
-    y_grid = torch.linspace(0, 1, 256)
+    # --------------------------------------------------
+    # Print information
+    # --------------------------------------------------
 
-    fig, axes = plt.subplots(1, 4, figsize=(14, 5))
+    print("u_min:", u.min())
+    print("u_max:", u.max())
 
-    cf = axes[0].contourf(x_grid, y_grid, u, levels=50, cmap="jet")
-    axes[0].set_title("u velocity")
+    print("v_min:", v.min())
+    print("v_max:", v.max())
+
+    print("P_min:", P.min())
+    print("P_max:", P.max())
+
+    print("uvp_grid shape:", uvp_grid.shape)
+    print("number shape:", number.shape)
+    print("mask shape:", mask.shape)
+
+    print("wall_mask shape:", wall_mask.shape)
+    print("uv_mask shape:", uv_mask.shape)
+
+    print("wall points:", np.sum(wall_mask))
+    print("uv points:", np.sum(uv_mask))
+
+    # --------------------------------------------------
+    # Grid
+    # --------------------------------------------------
+
+    x_grid = np.linspace(0, 1, 256)
+    y_grid = np.linspace(0, 1, 256)
+
+    fig, axes = plt.subplots(
+        1, 4,
+        figsize=(20, 5)
+    )
+
+    # ==================================================
+    # U velocity
+    # ==================================================
+
+    cf = axes[0].contourf(
+        x_grid,
+        y_grid,
+        u,
+        levels=50,
+        cmap="jet"
+    )
+
+    # Overlay wall BC
+    wy, wx = np.where(wall_mask > 0.5)
+
+    if len(wx) > 0:
+        axes[0].scatter(
+            x_grid[wx],
+            y_grid[wy],
+            s=8,
+            marker="x",
+            label="u=v=0"
+        )
+
+    # Overlay inlet BC
+    uy, ux = np.where(uv_mask > 0.5)
+
+    if len(ux) > 0:
+        axes[0].scatter(
+            x_grid[ux],
+            y_grid[uy],
+            s=12,
+            marker="o",
+            facecolors="none",
+            label="u=U, v=V"
+        )
+
+    axes[0].set_title("U Velocity")
+    axes[0].set_xlabel("x")
+    axes[0].set_ylabel("y")
+    axes[0].set_aspect("equal")
+
+    if len(wx) > 0 or len(ux) > 0:
+        axes[0].legend()
+
     fig.colorbar(cf, ax=axes[0])
 
-    cf = axes[1].contourf(x_grid, y_grid, v, levels=50, cmap="jet")
-    axes[1].set_title("v velocity")
+    # ==================================================
+    # V velocity
+    # ==================================================
+
+    cf = axes[1].contourf(
+        x_grid,
+        y_grid,
+        v,
+        levels=50,
+        cmap="jet"
+    )
+
+    if len(wx) > 0:
+        axes[1].scatter(
+            x_grid[wx],
+            y_grid[wy],
+            s=8,
+            marker="x"
+        )
+
+    if len(ux) > 0:
+        axes[1].scatter(
+            x_grid[ux],
+            y_grid[uy],
+            s=12,
+            marker="o",
+            facecolors="none"
+        )
+
+    axes[1].set_title("V Velocity")
+    axes[1].set_xlabel("x")
+    axes[1].set_ylabel("y")
+    axes[1].set_aspect("equal")
+
     fig.colorbar(cf, ax=axes[1])
 
-    cf = axes[2].contourf(x_grid, y_grid, P, levels=50, cmap="jet")
+    # ==================================================
+    # Pressure
+    # ==================================================
+
+    cf = axes[2].contourf(
+        x_grid,
+        y_grid,
+        P,
+        levels=50,
+        cmap="jet"
+    )
+
     axes[2].set_title("Pressure")
+    axes[2].set_xlabel("x")
+    axes[2].set_ylabel("y")
+    axes[2].set_aspect("equal")
+
     fig.colorbar(cf, ax=axes[2])
 
-    cf = axes[3].contourf(x_grid, y_grid, m, levels=50, cmap="jet")
-    axes[3].set_title("Mask")
-    fig.colorbar(cf, ax=axes[3])
+    # ==================================================
+    # Mask + Boundary Conditions
+    # ==================================================
 
-    plt.suptitle(f"Re (normalised): {number.item()}")
+    cf = axes[3].contourf(
+        x_grid,
+        y_grid,
+        m,
+        levels=[-0.5, 0.5, 1.5],
+        cmap="gray"
+    )
+
+    # Wall boundary
+    if len(wx) > 0:
+        axes[3].scatter(
+            x_grid[wx],
+            y_grid[wy],
+            s=12,
+            marker="x",
+            label="u=v=0"
+        )
+
+    # Inlet boundary
+    if len(ux) > 0:
+        axes[3].scatter(
+            x_grid[ux],
+            y_grid[uy],
+            s=20,
+            marker="o",
+            facecolors="none",
+            label="u=U, v=V"
+        )
+
+    axes[3].set_title("Mask + Boundary Conditions")
+    axes[3].set_xlabel("x")
+    axes[3].set_ylabel("y")
+    axes[3].set_aspect("equal")
+
+    if len(wx) > 0 or len(ux) > 0:
+        axes[3].legend()
+
+    # --------------------------------------------------
+    # Overall formatting
+    # --------------------------------------------------
+
+    re_value = number.item()
+
+    plt.suptitle(
+        f"Backward Facing Step | Normalised Re = {re_value:.4f}",
+        fontsize=14
+    )
+
     plt.tight_layout()
     plt.show()
