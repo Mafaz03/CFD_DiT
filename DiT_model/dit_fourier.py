@@ -15,8 +15,8 @@ script lives, or importing DiT will raise FileNotFoundError.
 import torch
 from einops import rearrange
 
-from DiT import TransformerLayer, get_time_embedding, NumberEmbedding
-from fourier_embedding import MultiScaleFourierPositionEmbedding2D
+from .DiT import TransformerLayer, get_time_embedding, NumberEmbedding
+from .fourier_embedding import MultiScaleFourierPositionEmbedding2D
 
 
 class FourierPatchEmbedding(torch.nn.Module):
