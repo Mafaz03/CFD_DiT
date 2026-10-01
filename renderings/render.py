@@ -33,6 +33,10 @@ with open(f"{ROOT}/config/config.json", "r") as file:
     config = json.load(file)
 
 
+
+def to_unit_range(x, lo, hi, **kwargs):   return 2.0 * (x - lo) / (hi - lo) - 1.0
+def from_unit_range(y, lo, hi, **kwargs): return (y + 1.0) / 2.0 * (hi - lo) + lo
+
 ### arguments ###
 
 parser = argparse.ArgumentParser(description="Render from the trained DiT and VAE")
@@ -55,14 +59,15 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 RE_MEAN = config["Stats"][args.meta]["Re_Mean"]
 RE_STD = config["Stats"][args.meta]["Re_Std"]
 
-U_MEAN = config["Stats"][args.meta]["U_MEAN"]
-U_STD = config["Stats"][args.meta]["U_STD"]
 
-V_MEAN = config["Stats"][args.meta]["V_MEAN"]
-V_STD = config["Stats"][args.meta]["V_STD"]
+U_CLIP_MIN = config["Stats"][args.meta]["U_CLIP_MIN"]
+U_CLIP_MAX = config["Stats"][args.meta]["U_CLIP_MAX"]
 
-P_MEAN = config["Stats"][args.meta]["P_MEAN"]
-P_STD = config["Stats"][args.meta]["P_STD"]
+V_CLIP_MIN = config["Stats"][args.meta]["V_CLIP_MIN"]
+V_CLIP_MAX = config["Stats"][args.meta]["V_CLIP_MAX"]
+
+P_CLIP_MIN = config["Stats"][args.meta]["P_CLIP_MIN"]
+P_CLIP_MAX = config["Stats"][args.meta]["P_CLIP_MAX"]
 
 
 vae = VAE(device = device, freeze = True, scaling_factor = config["VAE"]["scaling_factor"], path = f"{ROOT}/pretrained/sd-vae-ft-mse").to(device)
@@ -254,9 +259,9 @@ def ground_truth(re: float, plot: bool):
 
 def predict(re_value, sample_fn, 
             re_mean, re_std, 
-            u_mean, u_std, 
-            v_mean, v_std, 
-            P_mean, P_std, 
+            u_clip_min, u_clip_max, 
+            v_clip_min, v_clip_max, 
+            P_clip_min, P_clip_max, 
             grid_size,
             device="cpu", plot: bool = True, **kwargs):
     
@@ -270,9 +275,13 @@ def predict(re_value, sample_fn,
 
     img_np = img_np[0]
 
-    u = (img_np[0] * u_std) + u_mean
-    v = (img_np[1] * v_std) + v_mean
-    p = (img_np[2] * P_std) + P_mean
+    # u = (img_np[0] * u_std) + u_mean
+    # v = (img_np[1] * v_std) + v_mean
+    # p = (img_np[2] * P_std) + P_mean
+
+    u = from_unit_range(img_np[0], u_clip_min, u_clip_max, eps = 0.001)
+    v = from_unit_range(img_np[1], v_clip_min, v_clip_max, eps = 0.001)
+    p = from_unit_range(img_np[2], P_clip_min, P_clip_max, eps = 0.001)
 
     mag = np.sqrt(u**2 + v**2)
 
@@ -356,11 +365,11 @@ with imageio.get_writer(f"{ROOT}/renderings/renders/{args.save_file}.mp4", fps=1
 
         u_grid_pred, v_grid_pred, p_grid_pred, div_pred, momentum_res_pred, mag_pred = predict(re_value = re, sample_fn = solver, 
                                                                                                re_mean = RE_MEAN, re_std = RE_STD, 
-                                                                                               u_mean = U_MEAN,   u_std = U_STD, 
-                                                                                               v_mean = V_MEAN,   v_std = V_STD, 
-                                                                                               P_mean = P_MEAN,   P_std = P_STD,
+                                                                                               u_clip_min = U_CLIP_MIN, u_clip_max = U_CLIP_MAX, 
+                                                                                               v_clip_min = V_CLIP_MIN, v_clip_max = V_CLIP_MAX, 
+                                                                                               P_clip_min = P_CLIP_MIN, P_clip_max = P_CLIP_MAX,
                                                                                                grid_size = 256,
-                                                                                               device = device, plot = True
+                                                                                               device = device, plot = False
                                                                                                )     
         u_grid_pred       = np.array(u_grid_pred)
         v_grid_pred       = np.array(v_grid_pred)

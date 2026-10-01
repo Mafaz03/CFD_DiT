@@ -4,4 +4,8 @@ __pycache__
 *.pth
 *.safetensors
 *.out
-# Data/Problems
+
+Data/Problems
+Data/Problems.zip
+inference
+renderings/renders/*

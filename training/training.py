@@ -5,6 +5,9 @@ import torch.nn.functional as F
 import json
 from pathlib import Path
 
+from torch.optim.lr_scheduler import CosineAnnealingLR
+
+
 ROOT = Path(__file__).resolve().parent.parent
 with open(f"{ROOT}/config/config.json", "r") as file:
     config = json.load(file)
@@ -12,6 +15,7 @@ with open(f"{ROOT}/config/config.json", "r") as file:
 
 def train_dit(start_epoch, epochs, dataloader, dit, vae, scheduler, device, acc_steps, **kwargs):
     optimizer = AdamW(dit.parameters(), lr=config["Training"]["learning_rate"], weight_decay=0)
+    scheduler_lr = CosineAnnealingLR(optimizer, T_max=epochs)
     # loss_fn   = torch.nn.MSELoss()
 
     for param in vae.parameters():
@@ -38,17 +42,15 @@ def train_dit(start_epoch, epochs, dataloader, dit, vae, scheduler, device, acc_
 
             noisy_im = scheduler.add_noise(z, noise, t)
 
-            pred = dit(noisy_im, t, numbers)
-            
-            # loss = loss_fn(pred, noise)
-            sq = (pred - noise).pow(2) # [B, 4, 32, 32]
 
-            mask = mask.float().unsqueeze(1).to(device)                     # [B, 1, 256, 256]
-            mask = F.interpolate(mask, size=sq.shape[-2:], mode="nearest")  # [B, 1, 32, 32]
-            sq = sq * mask
-            loss = sq.sum() / mask.sum()
+            mask_px = mask.to(device)                                   # (B, 256, 256), conditioning input
+            pred = dit(noisy_im, t, numbers, mask_px)
 
-            true_loss = (sq * mask).sum() / mask.sum()
+            sq = (pred - noise).pow(2)
+            mask_lat = F.interpolate(mask_px.float().unsqueeze(1), size=sq.shape[-2:], mode="nearest")
+            sq = sq * mask_lat
+            loss = sq.sum() / (mask_lat.sum() * sq.shape[1])
+
             
             loss = loss / acc_steps
             loss.backward()
@@ -56,20 +58,22 @@ def train_dit(start_epoch, epochs, dataloader, dit, vae, scheduler, device, acc_
                 optimizer.step()
                 optimizer.zero_grad()
 
-            epoch_loss += true_loss.item()
+            epoch_loss += loss.item()
 
             if step_count % 50 == 0:
                 avg_so_far = epoch_loss / step_count
                 print(f"[DiT] Epoch {epoch+1}/{epochs}  "
                       f"Step {step_count}/{len(dataloader)}  "
                       f"loss={avg_so_far:.6f}", flush=True)
-                
+
+        scheduler_lr.step()
         avg = epoch_loss / len(dataloader)
         losses.append(avg)
 
         print(f"[DiT] Epoch {epoch+1}/{epochs}  loss={avg:.6f}")
 
-        if epoch % config["saves"]["DiT_Save_every"] == 0:
+        is_last = (epoch + 1) == epochs
+        if (epoch + 1) % config["saves"]["DiT_Save_every"] == 0 or is_last:
             torch.save(dit.state_dict(), config["saves"]["DiT_Path"])
 
     return losses

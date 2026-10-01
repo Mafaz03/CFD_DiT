@@ -46,21 +46,78 @@ optimizer = torch.optim.Adam(
     lr = lr
 )
 
+save_path = Path(ROOT) / config["saves"]["VAE_Path"]
+save_path.parent.mkdir(parents=True, exist_ok=True)
+
+
+# ---------------------------------------------------------------
+# Relative (scale-free) masked reconstruction loss
+# Every sample/channel counts by relative error, so low-Re fields
+# are not drowned out by high-Re ones.
+# ---------------------------------------------------------------
+def vae_recon_loss(rec, tgt, mask, eps=1e-3):
+    m = mask.float().unsqueeze(1)                              # [B, 1, H, W]
+    n = m.sum((2, 3)).clamp(min=1)                             # [B, 1]
+    mean = (tgt * m).sum((2, 3)) / n                           # [B, C]
+    var = (((tgt - mean[..., None, None]) ** 2) * m).sum((2, 3)) / n # [B, C]
+    std = (var + eps).sqrt()                                   # [B, C]
+
+    diff = rec - tgt
+    mse = ((diff ** 2) * m).sum((2, 3)) / n
+    l1  = (diff.abs() * m).sum((2, 3)) / n
+
+    # gradient term: keeps sharp structure that MSE blurs
+    mx = m[..., 1:] * m[..., :-1]
+    my = m[:, :, 1:, :] * m[:, :, :-1, :]
+    gx = ((rec[..., 1:] - rec[..., :-1]) - (tgt[..., 1:] - tgt[..., :-1])).abs()
+    gy = ((rec[:, :, 1:] - rec[:, :, :-1]) - (tgt[:, :, 1:] - tgt[:, :, :-1])).abs()
+    C = tgt.shape[1]
+    gl = ((gx * mx / std[..., None, None]).sum() / (mx.sum() * C)
+        + (gy * my / std[..., None, None]).sum() / (my.sum() * C))
+
+    rel_mse = (mse / (std ** 2)).mean()
+    rel_l1  = (l1 / std).mean()
+    return rel_mse + 0.5 * rel_l1 + 0.5 * gl
+
+
+# ---------------------------------------------------------------
+# Relative RMSE per Re bin (the metric that actually shows if low Re works)
+# ---------------------------------------------------------------
+@torch.no_grad()
+def eval_by_re(vae, dataloader, device, n_bins=6):
+    vae.eval()
+    rows = []
+    for images, numbers, mask, _, _ in dataloader:
+        images = images.to(device)
+        mu, _ = vae.encode(images)
+        rec = vae.decode(mu)
+        m = mask.float().unsqueeze(1).to(device)
+        n = m.sum((2, 3)).clamp(min=1)
+        mean = (images * m).sum((2, 3)) / n
+        var = (((images - mean[..., None, None]) ** 2) * m).sum((2, 3)) / n
+        err = (((rec - images) ** 2) * m).sum((2, 3)) / n
+        rel = (err / var.clamp(min=1e-8)).sqrt().cpu()          # [B,3]
+        for re, r in zip(numbers.view(-1).tolist(), rel.tolist()):
+            rows.append([re] + r)
+    rows = np.array(rows); rows = rows[np.argsort(rows[:, 0])]
+    for c in np.array_split(rows, n_bins):
+        print(f"[VAE eval] Re~{c[:,0].mean():+.2f}  rel-RMSE u={c[:,1].mean():.3f} v={c[:,2].mean():.3f} p={c[:,3].mean():.3f}")
+    vae.train()
+
+
 vae.train()
 
 optimizer.zero_grad()
 
 for epoch in range(num_epochs):
     total_loss = 0.0
-    for step, (images, numbers, mask) in enumerate(dataloader):
+    n_optim_steps = 0
+    for step, (images, numbers, mask, _, _) in enumerate(dataloader):
         images = images.to(device)
         
         reconstructed, mu, logvar = vae(images)
 
-        sq = (reconstructed - images).pow(2)
-        mask_ = mask.float().unsqueeze(1).to(device)
-        sq = sq * mask_
-        recon_loss = sq.sum() / mask_.sum()
+        recon_loss = vae_recon_loss(reconstructed, images, mask.to(device))
 
         kl_loss = 0.5 * torch.sum(logvar.exp() + mu.pow(2) -1 - logvar)
         kl_loss = kl_loss / mu.shape[0]     # average over batch size
@@ -71,13 +128,22 @@ for epoch in range(num_epochs):
         if (step + 1) % acc_steps == 0:
             optimizer.step()
             optimizer.zero_grad()
+            n_optim_steps += 1
 
         total_loss += loss.item()
 
-    print(
-        f"[VAE] Epoch {epoch + 1} finished, "
-        f"Average Loss: {total_loss / (step + 1):.6f}"
-    )
+    # flush whatever's left so gradients never leak across epoch boundaries
+    if (step + 1) % acc_steps != 0:
+        optimizer.step()
+        optimizer.zero_grad()
+        n_optim_steps += 1
 
-    if epoch % config["saves"]["VAE_Save_every"] == 0:
-        torch.save(vae.state_dict(), config["saves"]["VAE_Path"])
+
+    print(f"[VAE] Epoch {epoch+1} finished, Average Loss: {total_loss/(step+1):.6f}, "
+          f"optim steps: {n_optim_steps}")
+
+    is_last = (epoch + 1) == num_epochs
+    if (epoch + 1) % config["saves"]["VAE_Save_every"] == 0 or is_last:
+        torch.save(vae.state_dict(), save_path)
+        print(f"[VAE] Saved checkpoint to {save_path} (epoch {epoch+1})")
+        eval_by_re(vae, dataloader, device)

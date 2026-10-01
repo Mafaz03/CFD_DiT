@@ -58,7 +58,7 @@ class MultiScaleFourierPositionEmbedding2D(torch.nn.Module):
         ones, i.e. identical to the original non-annealed embedding.
         """
         mask = torch.zeros(self.n_bands * self.freqs_per_band, device=device)
-        band_start = torch.linspace(0, 1, self.n_bands, device=device)
+        band_start = torch.linspace(0, 1, self.n_bands + 1, device=device)[:-1]
         ramp_steepness = 5.0
         for i in range(self.n_bands):
             lo, hi = i * self.freqs_per_band, (i + 1) * self.freqs_per_band

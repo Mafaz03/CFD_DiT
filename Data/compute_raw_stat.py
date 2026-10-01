@@ -14,12 +14,15 @@ import argparse
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def compute_raw_stats(folder: str, meta: str, low_pct: float = 0.5, high_pct: float = 99.5,
+def compute_raw_stats(folder: str, json_file: str, meta: str, low_pct: float = 0.5, high_pct: float = 99.5,
                        length_cap: float = None):
     folder = Path(folder)
     files = sorted(p for p in folder.iterdir() if p.suffix.lower() == ".csv")
 
     all_u, all_v, all_p, all_re = [], [], [], []
+
+    with open(json_file, "r") as f:
+        re_mapping = json.load(f)
 
     for f in tqdm(files, desc=f"[{meta}] reading raw CSVs"):
         df = pd.read_csv(f)
@@ -38,7 +41,9 @@ def compute_raw_stats(folder: str, meta: str, low_pct: float = 0.5, high_pct: fl
         all_v.append(v)
         all_p.append(p)
 
-        re_value = float(f.stem.split("Re_")[-1])
+        # print(f.stem)
+
+        re_value = float(re_mapping[f.stem])
         all_re.append(re_value)
 
     all_u = np.concatenate(all_u)
@@ -84,6 +89,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Compute raw per-meta CFD stats + clip bounds")
     parser.add_argument("-f", "--folder", required=True,
                          help="Path to the RAW source CSV folder (e.g. Data/Problems/Lid_Driven_domain)")
+    parser.add_argument("-j", "--json_file", required=True,
+                         help="Path to the json mapping")
     parser.add_argument("-m", "--meta", required=True,
                          help="Meta/problem-domain key, e.g. 'Lid_Driven' or 'Flow_Past_Cylinder'")
     parser.add_argument("-lo", "--low_pct", default=0.5, type=float)
@@ -91,7 +98,7 @@ if __name__ == "__main__":
     parser.add_argument("-l_c", "--length_cap", default=None, type=float)
     args = parser.parse_args()
 
-    stats = compute_raw_stats(args.folder, args.meta, args.low_pct, args.high_pct, args.length_cap)
+    stats = compute_raw_stats(args.folder, args.json_file, args.meta, args.low_pct, args.high_pct, args.length_cap)
 
     # Write/merge into config.json automatically under Stats[meta]
     config_path = f"{ROOT}/config/config.json"

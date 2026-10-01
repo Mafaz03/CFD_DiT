@@ -9,6 +9,11 @@ ROOT = Path(__file__).resolve().parent.parent
 with open(f"{ROOT}/config/config.json", "r") as file:
     config = json.load(file)
 
+def to_unit_range(x, clip_min, clip_max):
+    return 2.0 * (x - clip_min) / (clip_max - clip_min) - 1.0
+
+def from_unit_range(x, clip_min, clip_max):
+    return (x + 1.0) / 2.0 * (clip_max - clip_min) + clip_min
 
 def no_slip_bc_loss(x0_pred_latent, vae, wall_mask, meta):
     """
@@ -18,9 +23,12 @@ def no_slip_bc_loss(x0_pred_latent, vae, wall_mask, meta):
     """
     decoded = vae.decode(x0_pred_latent)  # (B, 3, H, W), normalized (u, v, p)
 
+    # stats = config["Stats"][meta]
+    # u = decoded[:, 0:1] * stats["U_STD"] + stats["U_MEAN"]  # (B, 1, H, W)
+    # v = decoded[:, 1:2] * stats["V_STD"] + stats["V_MEAN"]
     stats = config["Stats"][meta]
-    u = decoded[:, 0:1] * stats["U_STD"] + stats["U_MEAN"]  # (B, 1, H, W)
-    v = decoded[:, 1:2] * stats["V_STD"] + stats["V_MEAN"]
+    u = from_unit_range(decoded[:, 0:1], stats["U_CLIP_MIN"], stats["U_CLIP_MAX"])
+    v = from_unit_range(decoded[:, 1:2], stats["V_CLIP_MIN"], stats["V_CLIP_MAX"])
 
     wall_mask = wall_mask.unsqueeze(1).float()  # (B, 1, H, W)
 
@@ -82,8 +90,8 @@ def train_pinn(start_epoch, epochs, dataloader, dit, vae, scheduler, device, acc
             wall_mask = wall_mask.to(device)
 
             # update annealing progress before this step's forward pass
-            if fourier_pos_embed is not None:
-                fourier_pos_embed.progress = global_step / max(total_steps, 1)
+            # if fourier_pos_embed is not None:
+            #     fourier_pos_embed.progress = global_step / max(total_steps, 1)
 
             with torch.no_grad():
                 mu, logvar = vae.encode(images)

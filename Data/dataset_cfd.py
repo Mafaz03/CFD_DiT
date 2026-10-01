@@ -20,6 +20,10 @@ import numpy as np
 from scipy.ndimage import binary_erosion
 
 
+def to_unit_range(x, lo, hi, **kwargs):   return 2.0 * (x - lo) / (hi - lo) - 1.0
+def from_unit_range(y, lo, hi, **kwargs): return (y + 1.0) / 2.0 * (hi - lo) + lo
+
+
 def get_boundary_coordinates(mask, u_grid, v_grid, U, V, tol=1e-1):
     """
     Returns boundary-condition masks with the same shape as the input grid.
@@ -61,7 +65,8 @@ class dataset_csv(Dataset):
         self,
         folder: str,
         meta: str,
-        grid_size: int = 256
+        grid_size: int = 256,
+        eps = 0.001
     ):
         self.folder = Path(folder)
 
@@ -75,11 +80,16 @@ class dataset_csv(Dataset):
 
         self.grid_size = grid_size
         self.meta = meta
+        self.eps = eps
+
+        with open(f"{ROOT}/Data/Problems/{meta}.json", "r") as file:
+            self.re_json = json.load(file)
 
     def __len__(self):
         return len(self.all_pths)
 
     def __getitem__(self, index):
+        # index = 0 # TODO: comment this out, for testing only
 
         selected = self.all_pths[index]
 
@@ -227,16 +237,18 @@ class dataset_csv(Dataset):
         # --------------------------------------------------
         # Normalize velocity / pressure
         # --------------------------------------------------
+        u_grid = to_unit_range(u_grid, config["Stats"][self.meta]["U_CLIP_MIN"], config["Stats"][self.meta]["U_CLIP_MAX"], eps = self.eps)
+        v_grid = to_unit_range(v_grid, config["Stats"][self.meta]["V_CLIP_MIN"], config["Stats"][self.meta]["V_CLIP_MAX"], eps = self.eps)
+        P_grid = to_unit_range(P_grid, config["Stats"][self.meta]["P_CLIP_MIN"], config["Stats"][self.meta]["P_CLIP_MAX"], eps = self.eps)
 
-        u_grid = (u_grid - config["Stats"][self.meta]["U_MEAN"]) / config["Stats"][self.meta]["U_STD"]
-
-        v_grid = (v_grid - config["Stats"][self.meta]["V_MEAN"]) / config["Stats"][self.meta]["V_STD"]
-
-        P_grid = (P_grid - config["Stats"][self.meta]["P_MEAN"]) / config["Stats"][self.meta]["P_STD"]
+        # u_grid = (u_grid - config["Stats"][self.meta]["U_MEAN"]) / config["Stats"][self.meta]["U_STD"]
+        # v_grid = (v_grid - config["Stats"][self.meta]["V_MEAN"]) / config["Stats"][self.meta]["V_STD"]
+        # P_grid = (P_grid - config["Stats"][self.meta]["P_MEAN"]) / config["Stats"][self.meta]["P_STD"]
 
         uvp_grid = np.stack([u_grid, v_grid, P_grid], axis=0).astype(np.float32)
 
-        number = float(selected.stem.split("_")[-1])
+        number = self.re_json[selected.stem]
+        
 
         return (
             uvp_grid,
@@ -249,8 +261,8 @@ class dataset_csv(Dataset):
 if __name__ == "__main__":
 
     dataset = dataset_csv(
-        folder="Data/Problems/Backward_Facing_Step_domain",
-        meta="Backward_Facing_Step"
+        folder="Data/Problems/Lid_Driven_domain",
+        meta="Lid_Driven"
     )
 
     dataloader = DataLoader(

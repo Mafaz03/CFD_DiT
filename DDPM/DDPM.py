@@ -65,3 +65,65 @@ class LinearNoiseScheduler:
         dir_xt = torch.sqrt(1 - alpha_prev) * pred_noise
         xt_prev = torch.sqrt(alpha_prev) * x0_pred + dir_xt
         return xt_prev, x0_pred
+
+
+    def ddim_ode_derivative(self, x_t, noise_pred, t):
+        """
+        DDIM probability-flow ODE derivative.
+
+        dx/dt = f(x_t, t)
+
+        Parameters
+        ----------
+        x_t : torch.Tensor
+            Current noisy latent.
+
+        noise_pred : torch.Tensor
+            DiT prediction epsilon_theta(x_t, t).
+
+        t : int
+            Diffusion timestep.
+
+        Returns
+        -------
+        f : torch.Tensor
+            ODE derivative dx_t/dt.
+        """
+
+        device = x_t.device
+        dtype = x_t.dtype
+
+        alpha = self.alpha_cum_prod.to(device=device, dtype=dtype)
+
+        alpha_t = alpha[t]
+
+        # Approximate d(alpha_bar_t) / dt
+
+        if t == 0:
+
+            # Forward difference
+            d_alpha_dt = alpha[1] - alpha[0]
+
+        elif t == len(alpha) - 1:
+            # Backward difference
+            d_alpha_dt = alpha[-1] - alpha[-2]
+
+        else:
+            # Central difference
+            d_alpha_dt = (alpha[t + 1] - alpha[t - 1]) / 2.0
+
+        # ---------------------------------------------------------
+        # DDIM probability-flow ODE
+        #
+        # dx/dt =
+        #
+        # [d(alpha_bar)/dt / (2 alpha_bar)]
+        #
+        # * [x_t - epsilon_theta / sqrt(1-alpha_bar)]
+        # ---------------------------------------------------------
+
+        sqrt_one_minus_alpha = torch.sqrt(1.0 - alpha_t)
+
+        f = (d_alpha_dt / (2.0 * alpha_t)) * (x_t - noise_pred / sqrt_one_minus_alpha)
+
+        return f
