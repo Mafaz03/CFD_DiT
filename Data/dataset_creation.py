@@ -19,20 +19,25 @@ def create():
     parser = argparse.ArgumentParser(description="Dataset creation for multiple CFD comsol simulations")
     parser.add_argument("-f",   "--folder")
     parser.add_argument("-m",   "--meta")
+    parser.add_argument("-j",   "--json_file")
     parser.add_argument("-t",   "--threshold",     default = 0.01, type = float)
-    parser.add_argument("-n",   "--grid_per_axis", default = 64,   type = int)
+    parser.add_argument("-n",   "--grid_per_axis", default = 256,  type = int)
     parser.add_argument("-l_c", "--length_cap",    default = None, type = float)
     parser.add_argument("-s_p", "--shift_up",      default = 0.0,  type = float)
 
     args = parser.parse_args()
 
-    files = os.listdir(f"{ROOT}/Data/Problems/{args.folder}")
+    with open(args.json_file, "r") as f:
+        re_mapping = json.load(f)
+
+    files = os.listdir(f"{ROOT}/{args.folder}")
     for file in tqdm(files):
-        if file.endswith(".csv"):
+        file = Path(file)
+        if file.suffix.lower() == '.csv':
 
-            re = file.split("Re_")[-1].split(".csv")[0]
+            re = float(re_mapping[file.stem])
 
-            df = pd.read_csv(f"{ROOT}/Data/Problems/{args.folder}/Re_{re}.csv")
+            df = pd.read_csv(f"{ROOT}/{args.folder}/{file}")
 
             if args.length_cap:
                 df = df[df["x"] <= args.length_cap]
@@ -51,7 +56,6 @@ def create():
                 ~np.isnan(p)
             )
 
-            
 
             x = x[valid]
             y = y[valid]
@@ -60,67 +64,83 @@ def create():
             p = p[valid]
 
             # Scale factor so that x spans [0, 1]
-            scale = x.max() - x.min()
+            x_range = x.max() - x.min()
+            y_range = y.max() - y.min()
 
-            x_scaled = (x - x.min()) / scale
-            y_scaled = (y - y.min()) / scale  
+            fits = (x.min() >= 0 and x.max() <= 1 and
+                    y.min() >= 0 and y.max() <= 1)
+
+            if fits:
+                # Already inside the canvas: keep the original size
+                x_scaled = x.copy()
+                y_scaled = y.copy()
+            else:
+                # Outside [0, 1]: scale by the longer side, preserving aspect ratio
+                scale = max(x_range, y_range)
+                x_scaled = (x - x.min()) / scale
+                y_scaled = (y - y.min()) / scale
+
+            x_scaled = x_scaled - x_scaled.min() 
+            y_scaled = y_scaled - y_scaled.min() 
 
             xi = np.linspace(0, 1, args.grid_per_axis)
             yi = np.linspace(0, 1, args.grid_per_axis)
 
             X, Y = np.meshgrid(xi, yi)
 
-            U = griddata((x_scaled, y_scaled+args.shift_up), u, (X, Y), method="linear")
-            V = griddata((x_scaled, y_scaled+args.shift_up), v, (X, Y), method="linear")
-            P = griddata((x_scaled, y_scaled+args.shift_up), p, (X, Y), method="linear")
 
-            # Build KD-tree from original points
-            tree = cKDTree(np.c_[x_scaled, y_scaled + args.shift_up])
+            U = griddata(
+                (x_scaled, y_scaled), u, (X, Y),
+                method="linear",
+                fill_value=np.nan
+            )
 
-            # Distance from every grid point to nearest original point
-            dist, _ = tree.query(np.c_[X.ravel(), Y.ravel()])
+            V = griddata(
+                (x_scaled, y_scaled), v, (X, Y),
+                method="linear",
+                fill_value=np.nan
+            )
 
-            # Reshape
-            dist = dist.reshape(X.shape)
+            P = griddata(
+                (x_scaled, y_scaled), p, (X, Y),
+                method="linear",
+                fill_value=np.nan
+            )
 
-            # Mask points farther than a threshold
-            untrustworthy = dist > args.threshold
+            # Valid CFD region
+            mask = (
+                ~np.isnan(U) &
+                ~np.isnan(V) &
+                ~np.isnan(P)
+            )
 
-            untrustworthy = untrustworthy | np.isnan(U) | np.isnan(V) | np.isnan(P)
+            # Keep NaN outside the valid region
+            U = np.where(mask, U, np.nan)
+            V = np.where(mask, V, np.nan)
+            P = np.where(mask, P, np.nan)
 
-            U = np.where(untrustworthy, np.nan, U)
-            V = np.where(untrustworthy, np.nan, V)
-            P = np.where(untrustworthy, np.nan, P)
+            # Clip only valid values
+            U[mask & (U < config["Stats"][args.meta]["U_CLIP_MIN"])] = config["Stats"][args.meta]["U_CLIP_MIN"]
+            U[mask & (U > config["Stats"][args.meta]["U_CLIP_MAX"])] = config["Stats"][args.meta]["U_CLIP_MAX"]
 
-            # import pdb; pdb.set_trace()
-            
-            U[U < config["Stats"][args.meta]["U_CLIP_MIN"]] = config["Stats"][args.meta]["U_CLIP_MIN"]
-            U[U > config["Stats"][args.meta]["U_CLIP_MAX"]] = config["Stats"][args.meta]["U_CLIP_MAX"]
+            V[mask & (V < config["Stats"][args.meta]["V_CLIP_MIN"])] = config["Stats"][args.meta]["V_CLIP_MIN"]
+            V[mask & (V > config["Stats"][args.meta]["V_CLIP_MAX"])] = config["Stats"][args.meta]["V_CLIP_MAX"]
 
-            V[V < config["Stats"][args.meta]["V_CLIP_MIN"]] = config["Stats"][args.meta]["V_CLIP_MIN"]
-            V[V > config["Stats"][args.meta]["V_CLIP_MAX"]] = config["Stats"][args.meta]["V_CLIP_MAX"]
-
-            P[P < config["Stats"][args.meta]["P_CLIP_MIN"]] = config["Stats"][args.meta]["P_CLIP_MIN"]
-            P[P > config["Stats"][args.meta]["P_CLIP_MAX"]] = config["Stats"][args.meta]["P_CLIP_MAX"]
-
-            
-            
-            mask = ~untrustworthy  # True = trustworthy / valid data
-
+            P[mask & (P < config["Stats"][args.meta]["P_CLIP_MIN"])] = config["Stats"][args.meta]["P_CLIP_MIN"]
+            P[mask & (P > config["Stats"][args.meta]["P_CLIP_MAX"])] = config["Stats"][args.meta]["P_CLIP_MAX"]
 
             new_df = pd.DataFrame({
-                                    "x": X.flatten(),
-                                    "y": Y.flatten(),
-                                    "u (m/s)": U.flatten(),
-                                    "v (m/s)": V.flatten(),
-                                    "p (Pa)" : P.flatten(),
-                                    "mask"   : mask.flatten()
-                                })
-            
-            os.makedirs(f"{ROOT}/Data/Problems/{args.folder}_domain", exist_ok=True)
-            new_df.to_csv(f"{ROOT}/Data/Problems/{args.folder}_domain/Re_{re}.csv")
+                "x": X.flatten(),
+                "y": Y.flatten(),
+                "u (m/s)": U.flatten(),
+                "v (m/s)": V.flatten(),
+                "p (Pa)": P.flatten(),
+                "mask": mask.flatten()
+            })
+            os.makedirs(f"{ROOT}/{args.folder}_domain", exist_ok=True)
+            new_df.to_csv(f"{ROOT}/{args.folder}_domain/{file.stem}.csv")
 
-    fig, axes = plt.subplots(1, 4, figsize=(12, 5))
+    fig, axes = plt.subplots(1, 5, figsize=(12, 5))
     a = axes[0].contourf(X, Y, U, levels=50, cmap="jet")
     plt.colorbar(a)
     axes[0].set_title("u velocity")
@@ -129,11 +149,15 @@ def create():
     axes[1].set_title("v velocity")
     plt.colorbar(a)
 
-    a = axes[2].contourf(X, Y, P, levels=50, cmap="jet")
+    a = axes[2].contourf(X, Y, ((U**2) + (V**2))**0.5, levels=50, cmap="jet")
+    axes[1].set_title("mag")
+    plt.colorbar(a)
+
+    a = axes[3].contourf(X, Y, P, levels=50, cmap="jet")
     axes[2].set_title("Pressure")
     plt.colorbar(a)
 
-    a = axes[3].contourf(X, Y, mask, levels=50, cmap="jet")
+    a = axes[4].contourf(X, Y, mask, levels=50, cmap="jet")
     axes[3].set_title("Mask")
     plt.colorbar(a)
 
