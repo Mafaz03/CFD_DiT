@@ -3,6 +3,7 @@ from typing import Tuple, List
 from einops import rearrange
 import json
 from pathlib import Path
+import torch.nn.functional as F
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -95,6 +96,10 @@ def get_time_embedding(time_steps, temb_dim):
     t_emb = torch.cat([torch.sin(t_emb), torch.cos(t_emb)], dim=-1)
     return t_emb
 
+def make_boundary_cond(mask, latent_size = 32):
+    """(B, H, W) pixel-res masks -> (B, 1, latent_size, latent_size)"""
+    m  = F.adaptive_avg_pool2d(mask.float().unsqueeze(1),      latent_size)  # fraction of cell inside domain
+    return m
     
 class NumberEmbedding(torch.nn.Module):
     def __init__(self, nemb_dim: int, d_model: int):
@@ -192,7 +197,7 @@ class PatchEmbedding(torch.nn.Module):
         return out # [B, grid_height/patch_height * grid_width/patch_width, d_model]
     
 class DiT(torch.nn.Module):
-    def __init__(self, d_model, patch_size, grid_size, g_channels, timestep_emb_dim, number_emb_dim, num_layers, num_heads):
+    def __init__(self, d_model, patch_size, grid_size, g_channels, timestep_emb_dim, number_emb_dim, num_layers, num_heads, cond_channels = 1):
         super().__init__()
 
         num_layers       = num_layers
@@ -213,10 +218,12 @@ class DiT(torch.nn.Module):
         self.nh = self.grid_height // self.patch_height
         self.nw = self.grid_width // self.patch_width
 
+        self.cond_channels = cond_channels
+
         # Patch Embedding Block
         self.patch_embed_layer = PatchEmbedding(grid_height  = self.grid_height, 
                                                 grid_width   = self.grid_width, 
-                                                g_channels   = self.g_channels, 
+                                                g_channels   = self.g_channels + self.cond_channels, 
                                                 patch_height = self.patch_height, 
                                                 patch_width  = self.patch_width,
                                                 d_model      = self.d_model)
@@ -228,12 +235,6 @@ class DiT(torch.nn.Module):
             torch.nn.SiLU(),
             torch.nn.Linear(self.d_model, self.d_model)
         )
-
-        # self.n_proj = torch.nn.Sequential(
-        #     torch.nn.Linear(self.number_emb_dim, self.d_model),
-        #     torch.nn.SiLU(),
-        #     torch.nn.Linear(self.d_model, self.d_model)
-        # )
 
         self.number_embed = NumberEmbedding(self.number_emb_dim, self.d_model)
         
@@ -270,20 +271,24 @@ class DiT(torch.nn.Module):
         torch.nn.init.constant_(self.proj_out.weight, 0)
         torch.nn.init.constant_(self.proj_out.bias, 0)
 
-    def forward(self, x, t, n):
+    def forward(self, x, t, n, boundaries):
         '''
-        x: Post VAE contour
-        t: time
-        n: number
+        x:          Post VAE contour
+        t:          time
+        n:          number
+        boundaries: no slip
+        TODO: make inlet -> inlet: list[tuple]
         '''
 
         # Patchify
+        boundaries_embed = make_boundary_cond(boundaries, self.grid_height)
+        x = torch.cat([x, boundaries_embed], dim = 1) # [B, 4+1, 32, 32]
         out = self.patch_embed_layer(x)
+        
 
         # Compute Timestep representation
         # t_emb -> (Batch, timestep_emb_dim)
         t_emb = get_time_embedding(torch.as_tensor(t).long(), self.timestep_emb_dim)
-        # n_emb = get_number_embedding(torch.as_tensor(n), self.number_emb_dim)
         n_emb = self.number_embed(n.float())
 
         # (Batch, timestep_emb_dim) -> (Batch, d_model)
@@ -300,7 +305,7 @@ class DiT(torch.nn.Module):
                pre_mlp_shift.unsqueeze(1))
 
         # Unpatchify
-        # (B,patches,d_model) -> (B,patches,channels * patch_width * patch_height)
+        # (B, patches, d_model) -> (B, patches, channels * patch_width * patch_height)
         out = self.proj_out(out)
         out = rearrange(out, 'b (nh nw) (ph pw c) -> b c (nh ph) (nw pw)',
                         ph=self.patch_height,
@@ -324,4 +329,5 @@ if __name__ == "__main__":
     grid = torch.rand(1, 4, 32, 32)
     t = torch.arange(0, 1, 1)
     n = torch.arange(0, 1, 1)
-    print(dit(grid, t, n).shape)
+    boundaries = torch.ones(1, 256, 256)
+    print(dit(grid, t, n, boundaries).shape)

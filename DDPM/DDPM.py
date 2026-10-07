@@ -40,7 +40,7 @@ class LinearNoiseScheduler:
             x0 = torch.clamp(x0, *clamp_range)
         return x0
 
-    def sample_prev_timestep(self, xt, pred, t):
+    def ddpm_step(self, xt, pred, t): 
         x0 = self.get_x0(xt, pred, t)
 
         mean = xt - ((self.betas.to(xt.device)[t]) * pred) / (self.sqrt_one_minus_alpha_cum_prod.to(xt.device)[t])
@@ -68,27 +68,6 @@ class LinearNoiseScheduler:
 
 
     def ddim_ode_derivative(self, x_t, noise_pred, t):
-        """
-        DDIM probability-flow ODE derivative.
-
-        dx/dt = f(x_t, t)
-
-        Parameters
-        ----------
-        x_t : torch.Tensor
-            Current noisy latent.
-
-        noise_pred : torch.Tensor
-            DiT prediction epsilon_theta(x_t, t).
-
-        t : int
-            Diffusion timestep.
-
-        Returns
-        -------
-        f : torch.Tensor
-            ODE derivative dx_t/dt.
-        """
 
         device = x_t.device
         dtype = x_t.dtype

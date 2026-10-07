@@ -127,7 +127,7 @@ def sample_ddpm(latent_grid_size: int, dit, vae, device, scheduler, number, **kw
                          torch.as_tensor(i).unsqueeze(0).to(device), 
                          torch.as_tensor(number).unsqueeze(0).to(device))
 
-        xt, x0_pred = scheduler.sample_prev_timestep(xt, noise_pred, torch.as_tensor(i).to(device))
+        xt, x0_pred = scheduler.ddpm_step(xt, noise_pred, torch.as_tensor(i).to(device))
 
     img_tensor = vae.decode(x0_pred)
     return img_tensor
