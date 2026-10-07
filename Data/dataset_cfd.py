@@ -180,6 +180,11 @@ if __name__ == "__main__":
         meta="Lid_Driven"
     )
 
+    # dataset = dataset_csv(
+    #         folder="Data/Problems/re_full_domain",
+    #         meta="re_full"
+    #     )
+
     dataloader = DataLoader(
         dataset,
         batch_size=1,

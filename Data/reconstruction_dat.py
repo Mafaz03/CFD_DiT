@@ -10,11 +10,14 @@ from scipy.interpolate import griddata
 # COMSOL DAT FILES -> CSV CONVERTION
 # ============================================================
 
-file_paths = ["Data/re_full.dat", "Data/re_06_hori.dat", "Data/re_06_verti.dat", "Data/re_rand.dat"]
-output_dirs = [Path("Data/Problems/re_full"), Path("Data/Problems/re_06_hori"), Path("Data/Problems/re_06_verti"), Path("Data/Problems/re_rand")]
+# file_paths = ["Data/re_full.dat", "Data/re_06_hori.dat", "Data/re_06_verti.dat", "Data/re_rand.dat"]
+# output_dirs = [Path("Data/Problems/re_full"), Path("Data/Problems/re_06_hori"), Path("Data/Problems/re_06_verti"), Path("Data/Problems/re_rand")]
 
-# file_paths = ["Data/re_06_verti.dat"]
-# output_dirs = [Path("Data/re_06_verti")]
+file_paths = ["Data/re_full.dat", "Data/re_06_hori.dat", "Data/re_06_verti.dat"]
+output_dirs = [Path("Data/Problems/re_full"), Path("Data/Problems/re_06_hori"), Path("Data/Problems/re_06_verti")]
+
+# file_paths = ["Data/re_full.dat"]
+# output_dirs = [Path("Data/re_full")]
 
 
 for file_path, output_dir in zip(file_paths, output_dirs):

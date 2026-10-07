@@ -5,7 +5,12 @@ __pycache__
 *.safetensors
 *.out
 
-Data/Problems
+Data/Problems/Backward_Facing_Step_domain
+Data/Problems/Flow_Past_Cylinder_domain
+Data/Problems/Lid_Driven_domain
+Data/Problems/*.json
+
+pretrained/sd-vae-ft-mse
 Data/Problems.zip
-# inference
+
 renderings/renders/*
