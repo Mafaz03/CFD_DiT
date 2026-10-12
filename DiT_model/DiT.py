@@ -195,16 +195,45 @@ class PatchEmbedding(torch.nn.Module):
                                                  device = x.device)
         out += pos_embed
         return out # [B, grid_height/patch_height * grid_width/patch_width, d_model]
-    
+
+
+class BoundaryEncoder(torch.nn.Module):
+    def __init__(self, cond_in: int, d_model: int, in_size: int, token_grid: int, width: int = 64):
+        super().__init__()
+        n_down = 0
+        s = in_size
+        while s > token_grid:
+            s //= 2
+            n_down += 1
+        assert s == token_grid, "in_size / token_grid must be a power of 2"
+ 
+        layers, c_in = [], cond_in
+        c_out = width
+        for _ in range(n_down):
+            layers += [torch.nn.Conv2d(c_in, c_out, 3, 2, 1), torch.nn.GroupNorm(8, c_out), torch.nn.SiLU(),
+                       torch.nn.Conv2d(c_out, c_out, 3, 1, 1), torch.nn.SiLU()]
+            c_in = c_out
+            c_out = min(c_out * 2, 256)
+        self.conv = torch.nn.Sequential(*layers)
+        self.to_tok = torch.nn.Conv2d(c_in, d_model, 1)
+        self.to_glob = torch.nn.Sequential(torch.nn.Linear(c_in, d_model), torch.nn.SiLU(),
+                                           torch.nn.Linear(d_model, d_model))
+ 
+    def forward(self, cond):
+        f = self.conv(cond)                                    # (B,C,g,g)
+        tok = self.to_tok(f).flatten(2).transpose(1, 2)        # (B,g*g,d)
+        glob = self.to_glob(f.mean((2, 3)))                    # (B,d)
+        return tok, glob
+ 
 class DiT(torch.nn.Module):
-    def __init__(self, d_model, patch_size, grid_size, g_channels, timestep_emb_dim, number_emb_dim, num_layers, num_heads, cond_channels = 1):
+    def __init__(self, d_model, patch_size, grid_size, g_channels, timestep_emb_dim, number_emb_dim, num_layers, num_heads, cond_channels = 2, cond_size = 256):
         super().__init__()
 
         num_layers       = num_layers
         self.grid_height = grid_size
         self.grid_width  = grid_size
 
-        self.g_channels = g_channels
+        self.g_channels = g_channels 
         
         self.d_model = d_model
 
@@ -223,12 +252,18 @@ class DiT(torch.nn.Module):
         # Patch Embedding Block
         self.patch_embed_layer = PatchEmbedding(grid_height  = self.grid_height, 
                                                 grid_width   = self.grid_width, 
-                                                g_channels   = self.g_channels + self.cond_channels, 
+                                                g_channels   = self.g_channels,
                                                 patch_height = self.patch_height, 
                                                 patch_width  = self.patch_width,
                                                 d_model      = self.d_model)
-        
 
+        self.bnd_enc = BoundaryEncoder(self.cond_channels, d_model, cond_size, self.nh)
+        # per-layer re-injection of the boundary tokens (zero-init: starts as identity)
+        self.layer_cond = torch.nn.ModuleList([torch.nn.Linear(d_model, d_model) for _ in range(num_layers)])
+        for l in self.layer_cond:
+            torch.nn.init.zeros_(l.weight)
+            torch.nn.init.zeros_(l.bias)
+    
         # Initial projection from sinusoidal time embedding
         self.t_proj = torch.nn.Sequential(
             torch.nn.Linear(self.timestep_emb_dim, self.d_model),
@@ -240,9 +275,7 @@ class DiT(torch.nn.Module):
         
 
         # All Transformer Layers
-        self.layers = torch.nn.ModuleList([
-            TransformerLayer(d_model = d_model, num_heads = num_heads) for _ in range(num_layers)
-        ])
+        self.layers = torch.nn.ModuleList([TransformerLayer(d_model = d_model, num_heads = num_heads) for _ in range(num_layers)])
 
         # Final normalization for unpatchify block
         self.norm = torch.nn.LayerNorm(self.d_model, elementwise_affine=False, eps=1E-6)
@@ -271,63 +304,55 @@ class DiT(torch.nn.Module):
         torch.nn.init.constant_(self.proj_out.weight, 0)
         torch.nn.init.constant_(self.proj_out.bias, 0)
 
-    def forward(self, x, t, n, boundaries):
+    def forward(self, x, t, n, cond):
         '''
-        x:          Post VAE contour
-        t:          time
-        n:          number
-        boundaries: no slip
-        TODO: make inlet -> inlet: list[tuple]
+        x:    noisy latent                (B, 4, 32, 32)
+        t:    timesteps                   (B,)
+        n:    normalised Reynolds number  (B,)
+        cond: boundary conditions         (B, cond_in_channels, 256, 256)
+              e.g. stack([mask, wall], dim=1)
         '''
-
-        # Patchify
-        boundaries_embed = make_boundary_cond(boundaries, self.grid_height)
-        x = torch.cat([x, boundaries_embed], dim = 1) # [B, 4+1, 32, 32]
-        out = self.patch_embed_layer(x)
-        
-
-        # Compute Timestep representation
-        # t_emb -> (Batch, timestep_emb_dim)
-        t_emb = get_time_embedding(torch.as_tensor(t).long(), self.timestep_emb_dim)
+        cond = cond.float()
+        bnd_tok, bnd_glob = self.bnd_enc(cond)                  # (B,N,d), (B,d)
+ 
+        # 1 boundary at the input
+        out = self.patch_embed_layer(x) + bnd_tok
+ 
+        # 2 boundary in the adaLN conditioning of every block
+        t_emb = get_time_embedding(torch.as_tensor(t).long().to(x.device), self.timestep_emb_dim)
         n_emb = self.number_embed(n.float())
-
-        # (Batch, timestep_emb_dim) -> (Batch, d_model)
-        # c_emb = self.t_proj(t_emb) + self.n_proj(n_emb)
-        c_emb = self.t_proj(t_emb) + n_emb
-
-        # Go through the transformer layers
-        for layer in self.layers:
-            out = layer(out, c_emb)
-
-        # Shift and scale predictions for output normalization
+        c_emb = self.t_proj(t_emb) + n_emb + bnd_glob
+ 
+        # 3 boundary tokens re-injected before every block
+        for i, layer in enumerate(self.layers):
+            out = layer(out + self.layer_cond[i](bnd_tok), c_emb)
+ 
         pre_mlp_shift, pre_mlp_scale = self.adaptive_norm_layer(c_emb).chunk(2, dim=1)
-        out = (self.norm(out) * (1 + pre_mlp_scale.unsqueeze(1)) +
-               pre_mlp_shift.unsqueeze(1))
-
-        # Unpatchify
-        # (B, patches, d_model) -> (B, patches, channels * patch_width * patch_height)
+        out = (self.norm(out) * (1 + pre_mlp_scale.unsqueeze(1)) + pre_mlp_shift.unsqueeze(1))
+ 
         out = self.proj_out(out)
         out = rearrange(out, 'b (nh nw) (ph pw c) -> b c (nh ph) (nw pw)',
-                        ph=self.patch_height,
-                        pw=self.patch_width,
-                        nw=self.nw,
-                        nh=self.nh)
+                        ph=self.patch_height, pw=self.patch_width, nw=self.nw, nh=self.nh)
         return out
     
 if __name__ == "__main__":
-    dit = DiT(d_model        = 512,
-            patch_size       = 2,
-            grid_size        = 32,
-            g_channels       = 4,
-            timestep_emb_dim = 512,
-            number_emb_dim   = 512,
-            num_layers       = 12,
-            num_heads        = 16)
-
+    dit = DiT(d_model          = 512, 
+              patch_size       = 2, 
+              grid_size        = 32, 
+              g_channels       = 4,
+              timestep_emb_dim = 512, 
+              number_emb_dim   = 512, 
+              num_layers       = 12, 
+              num_heads        = 16,
+              cond_channels    = 2,
+              cond_size        = 256
+              )
     
     print(f"{sum(i.numel() for i in dit.parameters()):,}")
+    
     grid = torch.rand(1, 4, 32, 32)
-    t = torch.arange(0, 1, 1)
-    n = torch.arange(0, 1, 1)
-    boundaries = torch.ones(1, 256, 256)
-    print(dit(grid, t, n, boundaries).shape)
+    t = torch.arange(0, 1)
+    n = torch.arange(0, 1)
+    cond = torch.rand(1, 2, 256, 256)
+
+    print(dit(grid, t, n, cond).shape)

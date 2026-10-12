@@ -132,32 +132,24 @@ class dataset_csv(Dataset):
         ys, xs = np.where(mask > 0.5)
 
         if len(ys) > 0:
-            # Free space (in pixels) between the valid region and each canvas edge
-            space = {
-                "left":  xs.min(),                 # towards x = 0
-                "right": n - 1 - xs.max(),         # towards x = 1
-                "down":  ys.min(),                 # towards y = 0 (row 0)
-                "up":    n - 1 - ys.max(),         # towards y = 1 (last row)
-            }
+            x_lo, x_hi = -xs.min(), n - 1 - xs.max()      # allowed dx range: left .. right
+            y_lo, y_hi = -ys.min(), n - 1 - ys.max()      # allowed dy range: down .. up
 
-            # Only directions that actually have room
-            options = [d for d, s in space.items() if s > 0]
+            axes_with_room = []
+            if x_hi - x_lo > 0:
+                axes_with_room.append("x")
+            if y_hi - y_lo > 0:
+                axes_with_room.append("y")
 
-            if options:
-                direction = np.random.choice(options)
-                amount = np.random.randint(1, space[direction] + 1)
+            dx, dy = 0, 0
+            if axes_with_room:
+                axis = np.random.choice(axes_with_room)       # one axis only, never both
+                if axis == "x":
+                    dx = np.random.randint(x_lo, x_hi + 1)    # uniform over every x position
+                else:
+                    dy = np.random.randint(y_lo, y_hi + 1)    # uniform over every y position
 
-                dx, dy = 0, 0
-                if direction == "left":
-                    dx = -amount
-                elif direction == "right":
-                    dx = amount
-                elif direction == "down":
-                    dy = -amount
-                else:  # up
-                    dy = amount
-
-                # Same shift for every array so they stay aligned
+            if dx != 0 or dy != 0:
                 uvp_grid = np.roll(uvp_grid, shift=(dy, dx), axis=(1, 2))
                 mask     = np.roll(mask,     shift=(dy, dx), axis=(0, 1))
                 wall_xy  = np.roll(wall_xy,  shift=(dy, dx), axis=(0, 1))
@@ -187,82 +179,91 @@ if __name__ == "__main__":
 
     dataloader = DataLoader(
         dataset,
-        batch_size=1,
+        batch_size=10,
         shuffle=True
     )
+    for _ in range(3):
+        uvp_grid, number, mask, wall_mask, uv_mask = next(iter(dataloader))
 
-    uvp_grid, number, mask, wall_mask, uv_mask = next(iter(dataloader))
+        u = uvp_grid[0, 0].numpy()
+        v = uvp_grid[0, 1].numpy()
+        P = uvp_grid[0, 2].numpy()
 
-    u = uvp_grid[0, 0].numpy()
-    v = uvp_grid[0, 1].numpy()
-    P = uvp_grid[0, 2].numpy()
+        u = from_unit_range(
+            uvp_grid[0, 0].numpy(),
+            config["Stats"]["Lid_Driven"]["U_CLIP_MIN"],
+            config["Stats"]["Lid_Driven"]["U_CLIP_MAX"]
+        )
 
-    u = from_unit_range(
-        uvp_grid[0, 0].numpy(),
-        config["Stats"]["Lid_Driven"]["U_CLIP_MIN"],
-        config["Stats"]["Lid_Driven"]["U_CLIP_MAX"]
-    )
+        v = from_unit_range(
+            uvp_grid[0, 1].numpy(),
+            config["Stats"]["Lid_Driven"]["V_CLIP_MIN"],
+            config["Stats"]["Lid_Driven"]["V_CLIP_MAX"]
+        )
 
-    v = from_unit_range(
-        uvp_grid[0, 1].numpy(),
-        config["Stats"]["Lid_Driven"]["V_CLIP_MIN"],
-        config["Stats"]["Lid_Driven"]["V_CLIP_MAX"]
-    )
+        P = from_unit_range(
+            uvp_grid[0, 2].numpy(),
+            config["Stats"]["Lid_Driven"]["P_CLIP_MIN"],
+            config["Stats"]["Lid_Driven"]["P_CLIP_MAX"]
+        )
+        
+        print((number * config["Stats"]["Lid_Driven"]["Re_Std"]) + config["Stats"]["Lid_Driven"]["Re_Mean"], P.min(), P.max())
 
-    P = from_unit_range(
-        uvp_grid[0, 2].numpy(),
-        config["Stats"]["Lid_Driven"]["P_CLIP_MIN"],
-        config["Stats"]["Lid_Driven"]["P_CLIP_MAX"]
-    )
-    
-    print((number * config["Stats"]["Lid_Driven"]["Re_Std"]) + config["Stats"]["Lid_Driven"]["Re_Mean"], P.min(), P.max())
+        m = mask[0].numpy()
+        w_m = wall_mask[0].numpy()
 
-    m = mask[0].numpy()
+        mag = np.sqrt(u**2 + v**2)
 
-    mag = np.sqrt(u**2 + v**2)
+        x_grid = np.linspace(0, 1, u.shape[1])
+        y_grid = np.linspace(0, 1, u.shape[0])
+        X, Y = np.meshgrid(x_grid, y_grid)
 
-    x_grid = np.linspace(0, 1, u.shape[1])
-    y_grid = np.linspace(0, 1, u.shape[0])
-    X, Y = np.meshgrid(x_grid, y_grid)
+        u_plot = u.copy()
+        v_plot = v.copy()
+        P_plot = P.copy()
+        mag_plot = mag.copy()
 
-    u_plot = u.copy()
-    v_plot = v.copy()
-    P_plot = P.copy()
-    mag_plot = mag.copy()
+        u_plot[m < 0.5] = np.nan
+        v_plot[m < 0.5] = np.nan
+        P_plot[m < 0.5] = np.nan
+        mag_plot[m < 0.5] = np.nan
 
-    u_plot[m < 0.5] = np.nan
-    v_plot[m < 0.5] = np.nan
-    P_plot[m < 0.5] = np.nan
-    mag_plot[m < 0.5] = np.nan
+        fig, axes = plt.subplots(2, 3, figsize=(18, 10))
 
-    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+        # import pdb; pdb.set_trace()
 
-    cf = axes[0, 0].contourf(X, Y, u_plot, levels=50, cmap="jet")
-    axes[0, 0].set_title("U Velocity")
-    axes[0, 0].set_aspect("equal")
-    fig.colorbar(cf, ax=axes[0, 0])
+        cf = axes[0, 0].contourf(X, Y, u_plot, levels=50, cmap="jet")
+        # axes[0, 0].scatter(wall_mask, marker = "x")
+        axes[0, 0].set_title("U Velocity")
+        axes[0, 0].set_aspect("equal")
+        fig.colorbar(cf, ax=axes[0, 0])
 
-    cf = axes[0, 1].contourf(X, Y, v_plot, levels=50, cmap="jet")
-    axes[0, 1].set_title("V Velocity")
-    axes[0, 1].set_aspect("equal")
-    fig.colorbar(cf, ax=axes[0, 1])
+        cf = axes[0, 1].contourf(X, Y, v_plot, levels=50, cmap="jet")
+        axes[0, 1].set_title("V Velocity")
+        axes[0, 1].set_aspect("equal")
+        fig.colorbar(cf, ax=axes[0, 1])
 
-    cf = axes[0, 2].contourf(X, Y, P_plot, levels=50, cmap="jet")
-    axes[0, 2].set_title("Pressure")
-    axes[0, 2].set_aspect("equal")
-    fig.colorbar(cf, ax=axes[0, 2])
+        cf = axes[0, 2].contourf(X, Y, P_plot, levels=50, cmap="jet")
+        axes[0, 2].set_title("Pressure")
+        axes[0, 2].set_aspect("equal")
+        fig.colorbar(cf, ax=axes[0, 2])
 
-    cf = axes[1, 0].contourf(X, Y, mag_plot, levels=50, cmap="jet")
-    axes[1, 0].set_title("Velocity Magnitude")
-    axes[1, 0].set_aspect("equal")
-    fig.colorbar(cf, ax=axes[1, 0])
+        cf = axes[1, 0].contourf(X, Y, mag_plot, levels=50, cmap="jet")
+        axes[1, 0].set_title("Velocity Magnitude")
+        axes[1, 0].set_aspect("equal")
+        fig.colorbar(cf, ax=axes[1, 0])
 
-    cf = axes[1, 1].contourf(X, Y, m, levels=[0, 0.5, 1], cmap="gray")
-    axes[1, 1].set_title("CFD Mask")
-    axes[1, 1].set_aspect("equal")
-    fig.colorbar(cf, ax=axes[1, 1])
+        cf = axes[1, 1].contourf(X, Y, m, levels=[0, 0.5, 1], cmap="gray")
+        axes[1, 1].set_title("CFD Mask")
+        axes[1, 1].set_aspect("equal")
+        fig.colorbar(cf, ax=axes[1, 1])
 
-    axes[1, 2].axis("off")
+        cf = axes[1, 2].contourf(X, Y, w_m, levels=[0, 0.5, 1], cmap="jet")
+        axes[1, 2].set_title("No slip")
+        axes[1, 2].set_aspect("equal")
+        fig.colorbar(cf, ax=axes[1, 2])
 
-    plt.tight_layout()
-    plt.show()
+        axes[1, 2].axis("off")
+
+        plt.tight_layout()
+        plt.show()
